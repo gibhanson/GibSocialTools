@@ -18,6 +18,7 @@ from pydantic_settings import (
 	JsonConfigSettingsSource
 )
 
+
 CONFIG_PATH = Path(__file__).resolve().parent / "sociallookup_config.json"  # By default, look next to this py file.
 
 
@@ -33,15 +34,19 @@ class Records:
 		# self.schema = {"ID": pl.String,	"Name": pl.String, "Time": pl.Datetime,
 		# 			   **{col: pl.String for col in self.config.platform_names}}
 
+
 	def __enter__(self) -> 'Records':
 		self.load()
 		return self
 
+
 	def __exit__(self, exc_type, exc_val, exc_tb):
 		self.save()
 
+
 	def __str__(self):
 		return str(self.data)
+
 
 	def load(self):
 		if Path(self.config.database_path).exists():
@@ -51,19 +56,11 @@ class Records:
 		else:
 			raise FileNotFoundError(f"{self.config.database_path}", self.config.database_path)
 
-	# def sync_schema(self):
-	# 	existing_cols = self.data.columns
-	# 	missing_cols = [p for p in self.config.platform_names if p not in existing_cols]
-	#
-	# 	if missing_cols:
-	# 		print(f"Syncing Schema: Adding {missing_cols} to database.")
-	# 		self.data = self.data.with_columns([pl.lit(None).alias(col) for col in missing_cols])
-	# 		self.save()
-
 	def save(self):
 		"""Saves both the database and config file."""
 		self.config.save()
 		self.data.write_csv(self.config.database_path)
+
 
 	def print_records(self, data: DataFrame):
 		"""Prints out a record in an easily readable form.
@@ -137,38 +134,38 @@ class Records:
 		now = datetime.datetime.now()
 		updates = {'Name': name, 'ID': hash_id, "Time": now}
 
+		lowered_dict_names = [p.lower() for p in socials_dict.keys()]
+
+		# For each valid platform in socials_dict, add it to updates.
 		for col in self.data.columns:
-			if col in self.config.platform_names:
-				if col in socials_dict:
-					updates[col] = socials_dict[col]
-				else:
-					# noinspection PyTypeChecker
-					updates[col] = None
+			if col.lower in lowered_dict_names:
+				updates[col] = socials_dict[col]
+			else:
+				# noinspection PyTypeChecker
+				updates[col] = None
 
-
-		if hash_id in self.data["ID"]:
-			# UPDATE: Apply the changes only to the row with this ID
+		if hash_id in self.data["ID"]: #If a record with this hash id already exists, update the record
 			expressions = [
 				pl.when(pl.col("ID") == hash_id)
 				.then(
-					# Inner logic: Only update if the new value is NOT None
 					pl.when(pl.lit(val).is_not_null())
 					.then(pl.lit(val))
 					.otherwise(pl.col(key))
 				)
-				.otherwise(pl.col(key))  # For every other row in the DB, keep the data
+				.otherwise(pl.col(key))
 				.alias(key)
 				for key, val in updates.items()
 			]
 
 			self.data = self.data.with_columns(expressions)
-		else:
+
+		else: # Otherwise, create a new record.
 			new_row = pl.DataFrame([updates])
 			new_row = new_row.select(self.data.columns)
 			new_row = new_row.cast(self.data.schema)
-
 			self.data = self.data.vstack(new_row)
 
+		self.save()
 		return hash_id
 
 
@@ -342,7 +339,6 @@ class ArgHandler:
 		"""Parses command line arguments."""
 		parser = argparse.ArgumentParser(description=f"Social Media Lookup Utility. Retrieves and modifies "
 													 f"social media information.")
-
 		parser.add_argument("name", type=str, nargs="*", default=None,
 							help=f"Name of person to look up. If used without a parameter, perform a fuzzy search "
 								 f"and displays all social media handles for matching persons. "
@@ -440,6 +436,7 @@ class ArgHandler:
 
 class AppSettings(BaseSettings):
 	"""Manages reading and writing of a json file containing default settings."""
+
 	#These are default settings if a .json can't be found.
 	database_path: Path = Field(default=Path(__file__).resolve().parent / "socials.csv")
 	score_cutoff: int = Field(default=70, ge=0, le=100)  # ge=0 means "greater than or equal to 0"
@@ -506,6 +503,7 @@ def get_url(platform: str, handle: str = ""):
 
 
 def pair(arg_string: str) -> Tuple[str, str]:
+	"""Create a tuple from a string 'argA:argB'. Used for parsing cmd line input."""
 	arg_string = arg_string.strip()
 	parts = arg_string.split(':', 1)  # Split along the =
 
@@ -526,13 +524,16 @@ def get_pathstring_with_parent(path: Path) -> str:
 def main(args):
 
 	try:
+		# Load settings and access our records.
 		with Records(AppSettings.load()) as db:
+
+			# Invoke our argument handler
 			if hasattr(args, "handler") and args.handler:
 				args.handler(db, args)
 			else:
 				args.print_help()
 
-	except KeyError as e:
+	except KeyError as e: # Usually bad user input or a record not found.
 		print(f"Error processing request:")
 		print(Fore.RED + f"\t{e}")
 	except FileNotFoundError as e:
