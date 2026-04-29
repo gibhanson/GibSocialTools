@@ -18,9 +18,6 @@ from pydantic_settings import (
 	JsonConfigSettingsSource
 )
 
-# TODO: Add a timestamp to show when last record update
-# TODO: Build a tester
-
 CONFIG_PATH = Path(__file__).resolve().parent / "sociallookup_config.json"  # By default, look next to this py file.
 
 

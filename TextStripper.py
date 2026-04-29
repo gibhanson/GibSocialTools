@@ -9,8 +9,6 @@ This program strips the speaker labels and timecodes from a text file produced b
 "Export to Text File" for transcribed video sequences. It can optionally replace speaker labels with proper names.
 '''
 
-#TODO: Create a way to configure a default in/out directory
-
 
 # Regex matching timecodes, e.g. 00:01:22:08 - 00:01:38:09
 TIMECODE_PATTERN = "^[0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2} - [0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2}"
