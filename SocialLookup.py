@@ -1,4 +1,5 @@
 # SocialLookup.py
+# PYTHON_ARGCOMPLETE_OK
 from __future__ import annotations
 import datetime
 import json
@@ -11,13 +12,15 @@ from thefuzz import process, fuzz
 import polars as pl
 from colorama import Fore, init
 from pydantic import Field
+import argcomplete
+from argcomplete.completers import EnvironCompleter, ChoicesCompleter
+
 from pydantic_settings import (
 	BaseSettings,
 	PydanticBaseSettingsSource,
 	SettingsConfigDict,
 	JsonConfigSettingsSource
 )
-
 
 CONFIG_PATH = Path(__file__).resolve().parent / "sociallookup_config.json"  # By default, look next to this py file.
 
@@ -31,24 +34,19 @@ class Records:
 	def __init__(self, settings: AppSettings):
 		self.config = settings
 		self.data = pl.DataFrame()
-		# self.schema = {"ID": pl.String,	"Name": pl.String, "Time": pl.Datetime,
-		# 			   **{col: pl.String for col in self.config.platform_names}}
-
 
 	def __enter__(self) -> 'Records':
 		self.load()
 		return self
 
-
 	def __exit__(self, exc_type, exc_val, exc_tb):
 		self.save()
-
 
 	def __str__(self):
 		return str(self.data)
 
-
 	def load(self):
+		# TODO: implement a backup?
 		if Path(self.config.database_path).exists():
 			self.data = pl.read_csv(self.config.database_path, infer_schema_length=0)
 			self.data = self.data.with_columns(pl.col("Time").str.to_datetime(strict=False))
@@ -61,23 +59,26 @@ class Records:
 		self.config.save()
 		self.data.write_csv(self.config.database_path)
 
-
-	def print_records(self, data: DataFrame):
-		"""Prints out a record in an easily readable form.
-		:param data: Dataframes containing records to print.
+	def get_records_string(self, records: DataFrame):
+		"""Returns a string of social records in an easily readable form, intended for CLI output.
+		:param records: Dataframes containing records to print.
 		"""
 		init(autoreset=True)  # Set up colorama text colors
 
-		for index, row in enumerate(data.iter_rows(named=True)):
-			print(Fore.GREEN + f"{row['Name']}: " + Fore.RESET + f"[{row['ID']}] {row["Time"].
-				  strftime('%a %b %d, %Y (%H:%M:%S)')}")
-			for col in data.columns:
+		out = ""
+
+		for index, row in enumerate(records.iter_rows(named=True)):
+			out += Fore.GREEN + f"{row['Name']}: " + Fore.RESET + f"[{row['ID']}]\n"
+
+			for col in records.columns:
 				if col in self.config.platform_names:
 					social_list_index = self.config.platform_names.index(col)
 					platform = self.config.platform_names[social_list_index]
+
 					if row[col] is not None:
 						handle = ""
 						url = ""
+
 						if platform == "website":
 							url = row[col]
 							parts = urlparse(url)
@@ -87,15 +88,18 @@ class Records:
 							url = get_url(platform, handle)
 
 						if url and "WT_SESSION" in os.environ:
-							sys.stdout.write(Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{format_link(handle, url)}")
-							sys.stdout.flush()
-						else:
-							print(Fore.CYAN +f"\t{platform}: " + Fore.RESET + f"{handle}")
+							out += Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{format_link(handle, url)}"
 
+						else:
+							out += Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{handle}\n"
+
+			out += f"\tUpdated {row["Time"].strftime('%a %b %d, %Y (%H:%M:%S)')}\n"
+			if index != records.height - 1: out += "\n"
+
+		return out
 
 	def get_platform_names(self) -> list[str]:
 		return self.config.platform_names.copy()
-
 
 	def update_setting(self, key: str, value: Any):
 		"""
@@ -116,11 +120,12 @@ class Records:
 
 		self.config.save()
 
-
 	def get_all(self) -> DataFrame:
 		"""Returns a DataFrame containing ALL records from the database."""
 		return self.data
 
+	def get_all_names(self) -> list:
+		return self.data['Name'].to_list()
 
 	def add(self, name: str, socials_dict: dict) -> str:
 		"""
@@ -132,19 +137,20 @@ class Records:
 		"""
 		hash_id = Records.generate_id(name)
 		now = datetime.datetime.now()
-		updates = {'Name': name, 'ID': hash_id, "Time": now}
+		updates = {}
 
-		lowered_dict_names = [p.lower() for p in socials_dict.keys()]
+		lowered_socials_dict = {k.lower(): v for k, v in socials_dict.items()}
 
 		# For each valid platform in socials_dict, add it to updates.
 		for col in self.data.columns:
-			if col.lower in lowered_dict_names:
-				updates[col] = socials_dict[col]
+			if col.lower() in lowered_socials_dict.keys():
+				updates[col] = lowered_socials_dict[col.lower()]
 			else:
 				# noinspection PyTypeChecker
 				updates[col] = None
+		updates.update({'Name': name, 'ID': hash_id, "Time": now})
 
-		if hash_id in self.data["ID"]: #If a record with this hash id already exists, update the record
+		if hash_id in self.data["ID"]:  # If a record with this hash id already exists, update the record
 			expressions = [
 				pl.when(pl.col("ID") == hash_id)
 				.then(
@@ -159,15 +165,14 @@ class Records:
 
 			self.data = self.data.with_columns(expressions)
 
-		else: # Otherwise, create a new record.
+		else:  # Otherwise, create a new record.
 			new_row = pl.DataFrame([updates])
 			new_row = new_row.select(self.data.columns)
-			new_row = new_row.cast(self.data.schema)
+			# new_row = new_row.cast(self.records.schema)
 			self.data = self.data.vstack(new_row)
 
 		self.save()
 		return hash_id
-
 
 	def remove(self, name: str, platforms: list) -> DataFrame:
 		"""
@@ -194,7 +199,6 @@ class Records:
 
 		return self.data.filter(col("ID") == hash_id)
 
-
 	def delete(self, name: str) -> DataFrame:
 		"""
 		Remove a record from the database based on name.
@@ -208,9 +212,10 @@ class Records:
 		hash_id = self.data.filter(pl.col("Name") == name).select("ID").item()
 		removed = self.drop(hash_id)
 
-		if removed.is_empty: raise KeyError(f"ID '{hash_id}' not found in database.")
-		else: return removed
-
+		if removed.is_empty:
+			raise KeyError(f"ID '{hash_id}' not found in database.")
+		else:
+			return removed
 
 	def drop(self, hash_id: str) -> DataFrame:
 		"""
@@ -229,7 +234,6 @@ class Records:
 		self.data = self.data.filter(pl.col("ID") != hash_id)
 		return record
 
-
 	def get_by_name(self, name: str) -> DataFrame:
 		"""
 		Returns a record from the database based on a name. 'name' must be an exact
@@ -240,9 +244,10 @@ class Records:
 		multiple records match the name.
 		"""
 		record = self.data.filter(pl.col("Name").str.to_lowercase() == name.lower())
-		if record.is_empty:	raise KeyError(f"'{name}' not found in database.")
-		else: return record
-
+		if record.is_empty:
+			raise KeyError(f"'{name}' not found in database.")
+		else:
+			return record
 
 	def get_id(self, name: str) -> str:
 		"""
@@ -260,7 +265,6 @@ class Records:
 
 		return record.item(0, "ID")
 
-
 	def search_single(self, name: str) -> DataFrame:
 		"""
 		Performs a fuzzy search of the database's 'name' column and returns the BEST match.
@@ -272,7 +276,6 @@ class Records:
 		matched_names = [match[0] for match in results]
 
 		return self.data[self.data['Name'].is_in(matched_names)].clone()
-
 
 	def search(self, name: str, cutoff: int = None) -> DataFrame:
 		"""
@@ -290,7 +293,6 @@ class Records:
 
 		return self.data.filter(pl.col("Name").is_in(matched_names))
 
-
 	def get_by_id(self, id_hash: str) -> DataFrame:
 		"""Returns a record from the database based on a hash ID.
 		:param id_hash: The hash ID of the record to look up.
@@ -298,12 +300,14 @@ class Records:
 		:raises KeyError: if 'id_hash' doesn't exist in the database.
 		"""
 		record = self.data.filter(pl.col("ID") == id_hash)
-		if record.is_empty(): raise KeyError(f"'{id_hash}' not found in database.")
-		else: return record
-
+		if record.is_empty():
+			raise KeyError(f"'{id_hash}' not found in database.")
+		else:
+			return record
 
 	@staticmethod
 	def generate_id(name: str) -> str:
+		"""Generate an md5 hash from a string. Used for creating IDs from names."""
 		return hashlib.md5(name.lower().encode()).hexdigest()[:8].lower()
 
 
@@ -317,14 +321,12 @@ class ArgHandler:
 			# Inject the handler
 			setattr(namespace, "handler", ArgHandler.handle_add)
 
-
 	class HandleRemoveAction(argparse.Action):
 		def __call__(self, parser, namespace, values, option_string=None):
 			# This stores the list of fields (the 'values')
 			setattr(namespace, self.dest, values)
 			# This "injects" the handler function into the namespace
 			setattr(namespace, "handler", ArgHandler.handle_remove)
-
 
 	class HandleIDAction(argparse.Action):
 		def __call__(self, parser, namespace, values, option_string=None):
@@ -333,75 +335,76 @@ class ArgHandler:
 			# Inject the handler function
 			setattr(namespace, "handler", ArgHandler.handle_id)
 
-
 	@staticmethod
-	def get_args():
+	def get_args(db: Records):
 		"""Parses command line arguments."""
 		parser = argparse.ArgumentParser(description=f"Social Media Lookup Utility. Retrieves and modifies "
 													 f"social media information.")
-		parser.add_argument("name", type=str, nargs="*", default=None,
-							help=f"Name of person to look up. If used without a parameter, perform a fuzzy search "
+
+
+		defarg = parser.add_argument("name", type=str, nargs="*", default=None,
+							help=f"Name of person to look up. If used without another flag, perform a fuzzy search "
 								 f"and displays all social media handles for matching persons. "
 								 f"If no name is provided, prints the entire database.")
+
+
+		defarg.completer = ChoicesCompleter(db.get_all_names())
 
 		group = parser.add_mutually_exclusive_group(required=False)
 
 		group.add_argument("-a", "--add", nargs="+", action=ArgHandler.HandleAddAction,
 						   help="Add or update a social record (e.g. \"Twitter=@handle Bluesky=@handle\"). "
-								"Requires that the Name parameter be exact.")
+								"Requires that the Name parameter be an exact match.")
 		group.add_argument("-r", "--remove", type=str, nargs='+', action=ArgHandler.HandleRemoveAction,
-						   help="Delete social record. Requires that the Name parameter be exact.")
+						   help="Delete social record. Requires that the Name parameter be an exact match.")
 		group.add_argument("-d", "--drop", default=False, action="store_const",
 						   const=ArgHandler.handle_drop, dest="handler",
-						   help="Delete an entire entry. Requires that the Name parameter be exact.")
+						   help="Delete an entire entry. Requires that the Name parameter be an exact match.")
 		group.add_argument("-id", "--id", nargs=1, action=ArgHandler.HandleIDAction, metavar="ID",
 						   help="Retrieve the hash ID of a social record by name. "
-								"Requires that the Name parameter be exact.")
+								"Requires that the Name parameter be an exact match.")
 		group.add_argument("-c", "--cutoff", type=int, default=70,
 						   help="Search cutoff for fuzzy searching (0 - 100). Lower is less strict. Default is 70.")
 
 		parser.set_defaults(handler=ArgHandler.handle_default)
 
+		argcomplete.autocomplete(parser)
 		args = parser.parse_args()
 
-		if isinstance(args.name, list): # Make it so the name parameter doesn't need to be in quotation marks
+
+		if isinstance(args.name, list):  # Make it so the name parameter doesn't need to be in quotation marks
 			args.name = " ".join(args.name)
 
 		return args
 
 	@staticmethod
 	def handle_add(db, args):
-
+		"""Handles adding or updating a social record with new handles."""
 		if not args.name:
 			raise ValueError("Name must be provided.")
 		else:
-			socials = dict()
-
+			socials = {}
 			for item in args.add:
 				entry = pair(item)
 				socials[entry[0]] = entry[1]
-
 			hash_id = db.add(args.name, socials)
+			print(db.get_records_string(db.get_by_id(hash_id)))
 
-
-			db.print_records(db.get_by_id(hash_id))
-
-	@staticmethod
-	def handle_list_all(db, args):
-		# This one ignores the Name parameter entirely
-		db.print_records(db.get_all())
 
 	@staticmethod
 	def handle_drop(db, args):
+		"""Handles removing a record from the database entirely."""
 		if not args.name:
 			raise ValueError("Name must be provided.")
 		else:
 			hash_id = db.get_id(args.name)
 			db.drop(db.get_id(args.name))
-			print("Removed " + Fore.CYAN + f"{args.name} ({hash_id}).")
+			print("Removed " + Fore.GREEN + f"{args.name}" + Fore.RESET + f"[{hash_id}].")
+
 
 	@staticmethod
 	def handle_remove(db, args):
+		"""Handles removing a social handle from a record."""
 		if not args.name:
 			raise ValueError("Name must be provided.")
 		if not args.remove:
@@ -414,22 +417,28 @@ class ArgHandler:
 		else:
 			record = db.remove(args.name, valid_platforms)
 			print("Updated Record:")
-			db.print_records(record)
+			print(db.get_records_string(record))
+
 
 	@staticmethod
 	def handle_id(db: Records, args):
+		"""Handles retrieving a record by its hash ID instead of a name."""
 		if not args.name:
 			raise ValueError("Name must be provided.")
-		else: db.get_by_id(args.name)
+		else:
+			print(db.get_records_string(db.get_by_id(args.name)))
+
 
 	@staticmethod
 	def handle_default(db: Records, args):
+		"""Handles the default program behavior. Fuzzy search for a name or list everything."""
 		if not args.name:
-			db.print_records(db.get_all())
+			out = db.get_records_string(db.get_all())
+			print(out)
 		else:
 			found = db.search(args.name)
 			if found.height > 0:
-				db.print_records(db.search(args.name))
+				print(db.get_records_string(db.search(args.name)))
 			else:
 				print("Error: No records found.")
 
@@ -437,10 +446,10 @@ class ArgHandler:
 class AppSettings(BaseSettings):
 	"""Manages reading and writing of a json file containing default settings."""
 
-	#These are default settings if a .json can't be found.
+	# These are default settings if a .json can't be found.
 	database_path: Path = Field(default=Path(__file__).resolve().parent / "socials.csv")
 	score_cutoff: int = Field(default=70, ge=0, le=100)  # ge=0 means "greater than or equal to 0"
-	platform_names: list[str] = ["Twitter", "BlueSky", "Facebook", "Website", "Description"]
+	platform_names: list[str] = ["Twitter", "BlueSky", "Facebook", "Website", "Instagram", "Description"]
 	model_config = SettingsConfigDict(json_file=CONFIG_PATH)
 
 	@classmethod
@@ -498,6 +507,8 @@ def get_url(platform: str, handle: str = ""):
 			return f"https://bsky.app/profile/{no_at}"
 		case "Facebook":
 			return f"https://www.facebook.com/{no_at}"
+		case "Instagram":
+			return f"https://www.instagram.com/{no_at}"
 		case _:
 			return None
 
@@ -521,11 +532,16 @@ def get_pathstring_with_parent(path: Path) -> str:
 	return path.parent.name + os.sep + path.name
 
 
-def main(args):
+
+if __name__ == "__main__":
+	init(autoreset=True)  # Set up colorama text colors
+	if sys.platform == 'win32': os.system('color')
 
 	try:
 		# Load settings and access our records.
 		with Records(AppSettings.load()) as db:
+
+			args = ArgHandler.get_args(db)
 
 			# Invoke our argument handler
 			if hasattr(args, "handler") and args.handler:
@@ -533,7 +549,7 @@ def main(args):
 			else:
 				args.print_help()
 
-	except KeyError as e: # Usually bad user input or a record not found.
+	except KeyError as e:  # Usually bad user input or a record not found.
 		print(f"Error processing request:")
 		print(Fore.RED + f"\t{e}")
 	except FileNotFoundError as e:
@@ -544,13 +560,6 @@ def main(args):
 	except pl.exceptions.NoDataError as e:
 		print("Error: The CSV file exists but is empty or corrupt:")
 		print("\t" + Fore.RED + str(db.config.database_path))
-
-
-if __name__ == "__main__":
-	if sys.platform == 'win32': os.system('color')
-
-	try:
-		main(ArgHandler.get_args())
 	except KeyboardInterrupt:
 		print("Operation cancelled by user.")
 		exit(1)

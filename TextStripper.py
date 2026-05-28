@@ -9,19 +9,19 @@ This program strips the speaker labels and timecodes from a text file produced b
 "Export to Text File" for transcribed video sequences. It can optionally replace speaker labels with proper names.
 '''
 
-
 # Regex matching timecodes, e.g. 00:01:22:08 - 00:01:38:09
 TIMECODE_PATTERN = "^[0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2} - [0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2}"
 DEFAULT_EXT = ".txt"  # Default filename extension
 DEFAULT_LABEL = "Speaker"  # Default speaker label to match in transcripts.
 SEPARATOR = "-"  # Used when appending several transcripts to a single output file, to delineate transcript names.
-DEFAULT_OUTPUT_FILENAME = f"output{DEFAULT_EXT}"
+DEFAULT_UNIQUENAME = "stripped"
 
 # Error codes for ParseFileException
 PFE_NONEXISTANT = 1
 PFE_FILE_ERROR = 2
 PFE_SPEAKER_ERROR = 3
 
+speaker_arg_counter = 0  # Incremented with each new speaker in arguments
 
 class ParseFileException(Exception):
 	"""Exception thrown when the processFile function can't process a transcript file.
@@ -61,33 +61,41 @@ def prompt_yn(question, default="yes"):
 			print("Please respond with 'yes' or 'no' (or 'y' or 'n').")
 
 
-def get_unique_filename(test_filename: Path) -> Path:
-	"""Takes a path. If something already exists there, append '_1' to the end of the file name.
-	Keep incrementing that last number and checking until a unique filename is found.
-	:returns: Path to the unique filename"""
-	counter = 1
-	# Grab "file" from "file_1" or just "file" from "file"
-	base_stem = re.split(r"_(\d+)$", test_filename.stem, maxsplit=1)[0]
-	new_path = test_filename
+def get_unique_filename(original_path: Path) -> Path:
+	"""Takes a path. If a file with the same name already exists there, return a path with DEFAULT_UNIQUENAME, and
+	possibly a number, appended to the filename such that a path to a unique, nonexistant filename is returned.
+	:returns: Path to the unique file."""
 
+	# Test existance and try to return before looping.
+	if not original_path.exists(): return original_path
+
+	# Strip trailing _NNN from original_path.
+	split_filename = re.split(r"_(\d+)$", original_path.stem, maxsplit=1)
+
+	# append DEFAULT_UNIQUENAME to base_stem, and try to exit before looping.
+	new_path = original_path.parent / f"{split_filename[0]}_{DEFAULT_UNIQUENAME}{original_path.suffix}"
+	if not new_path.exists(): return new_path
+
+	counter = 1
 	# If it already had a number, start our counter one higher
-	split = re.split(r"_(\d+)$", test_filename.stem, maxsplit=1)
-	if len(split) > 1:
-		counter = int(split[1]) + 1
+	if len(split_filename[1]) > 1: counter = int(split_filename[1]) + 1
 
 	# Test if file with the name exists, and increment the trailing number till a unique file is found.
 	while new_path.exists():
-		new_path = test_filename.parent / f"{base_stem}_{counter}{test_filename.suffix}"
+		new_path = original_path.parent / f"{split_filename[0]}_{DEFAULT_UNIQUENAME}_{counter}{original_path.suffix}"
 		counter += 1
 
 	return new_path
 
 
 def get_filename_header(filename: str) -> str:
+	"""Creates a string from a filename with separator text on the lines before and after the filename.
+	Used in writing multiple stripped transcript files to a single output file."""
 	header = SEPARATOR * len(filename) + "\n"
 	header += filename + "\n"
 	header += SEPARATOR * len(filename) + "\n"
 	return header
+
 
 def get_pathstring_with_parent(path: Path) -> str:
 	"""Returns the name of a path's parent dir along with its own name, e.g. 'files/file.txt'.
@@ -97,9 +105,6 @@ def get_pathstring_with_parent(path: Path) -> str:
 	"""
 	if path == path.parent: return path.name  # Check if we're at the root of the filesystem.
 	return path.parent.name + os.sep + path.name
-
-
-speaker_arg_counter = 0  # Incremented with each new speaker in arguments
 
 
 def speaker_pair(arg_string: str):
@@ -209,23 +214,27 @@ def get_args():
 										"(with automatic numbering).")
 	parser.add_argument("-t", "--timecodes", default=False, action="store_true",
 						help="preserve timecodes")
-	parser.add_argument("-v", "--verbose", default=False, action="store_true",
-						help="display results and errors for each file processed")
+	parser.add_argument("-v", "--noverbose", default=False, action="store_true",
+						help="hides results and errors for each file processed")
 	parser.add_argument("-x", "--overwrite", default=False, action="store_true",
 						help="overwrite existing files")
 	parser.add_argument("-l", "--label", type=str, default=DEFAULT_LABEL,
 						help=f"speaker label (to match in transcripts). Default is '{DEFAULT_LABEL}'")
 	parser.add_argument("-ex", "--extra", default=[], type=str, action="append",
-						nargs='+', help="Extra speaker names for missing speakers.")
+						nargs='+', help="extra speaker names for missing speakers.")
 	return parser.parse_args()
 
 
+# noinspection PyPackageRequirements
 def main(args):
+
+
+
 	# Get arguments from argparse into local variables
 	arg_ext = args.extension
 	arg_keep_timecodes = args.timecodes
 	arg_overwrite = args.overwrite
-	arg_verbose = args.verbose
+	arg_verbose = not args.noverbose
 	arg_interactive = args.interactive
 	arg_recursive = args.recursive
 	arg_label = args.label
@@ -233,10 +242,10 @@ def main(args):
 	arg_wildcard = args.wildcard
 	arg_extra = args.extra
 
-	init(autoreset=True)  # Set up colorama text colors
 
-	#----------------------------------
-	#HANDLE SPEAKERS
+
+	# ----------------------------------
+	# HANDLE SPEAKERS
 	# ----------------------------------
 	# Create speaker_map, populate with args or use a default entry.
 	speaker_map = {}
@@ -258,7 +267,7 @@ def main(args):
 		speaker_map = new_map
 
 	# ----------------------------------
-	#HANDLE INPUT PATH
+	# HANDLE INPUT PATH
 	# ----------------------------------
 	# Check that the input path argument can be resolved on the filesystem.
 	try:
@@ -268,7 +277,7 @@ def main(args):
 		else:
 			arg_inpath.resolve(strict=True)
 
-		# If input path can't be resolved, exit or prompt to revise and recheck.
+	# If input path can't be resolved, exit or prompt to revise and recheck.
 	except (OSError, RuntimeError, FileNotFoundError) as e:
 		print(Fore.RED + f"Input path is invalid: '{arg_inpath}'")
 		if arg_verbose: print(Fore.RED + f"Error: {e}")
@@ -278,17 +287,23 @@ def main(args):
 	# HANDLE OUTPUT PATH
 	# ----------------------------------
 	arg_outpath = Path(args.output) if args.output else arg_inpath
+	write_single_file = False #This indicates that we're writing all input files to a single output file.
 	try:
 		# If out_path is relative, make it relative to input path
 		if not arg_outpath.is_absolute():
 			arg_outpath = arg_inpath / arg_outpath if arg_inpath.is_dir() else arg_inpath.parent / arg_outpath
-		arg_outpath.resolve()
+		arg_outpath = arg_outpath.resolve()
 	except (OSError, RuntimeError) as e:
 		print(Fore.RED + f"Output path is invalid: '{arg_outpath}'")
 		if arg_verbose: print(Fore.RED + f"Error: {e}")
 		exit(1)
-	if not arg_outpath.suffix == args.extension: # if outpath is a dir, make sure it exists
+	# if outpath is a dir, make sure it exists
+	# TODO: We're determining if a non-existant path is a dir based on the existance of a .xxx suffix. Not great.
+	if not arg_outpath.suffix:
 		arg_outpath.mkdir(parents=True, exist_ok=True)
+	else:
+		arg_outpath.touch()
+		write_single_file = True
 
 	# Set up some stats collection.
 	success_list = list()  # Dict containing successfully processed file input and output pairs.
@@ -317,7 +332,7 @@ def main(args):
 	in_out_paths = []
 	for path in in_paths:
 		try:
-			if not is_transcript(path): continue # First, check if we're looking at a valid transcript file.
+			if not is_transcript(path): continue  # First, check if we're looking at a valid transcript file.
 
 			if arg_outpath.is_dir():
 				if arg_inpath.is_dir():
@@ -332,7 +347,7 @@ def main(args):
 			fail_list.append(path)
 			continue
 
-	if len(in_out_paths) == 0: # Double-check to make sure we've identified some transcripts.
+	if len(in_out_paths) == 0:  # Double-check to make sure we've identified some transcripts.
 		print(Fore.RED + f"No transcript files found.")
 		exit(0)
 
@@ -346,14 +361,13 @@ def main(args):
 		if arg_verbose: print(f"{get_pathstring_with_parent(in_file)}:")
 
 		# Handle the overwrite argument. Create a unique filename for out_file if needed.
-		if out_file.exists():
+		if out_file.exists() and arg_outpath.is_dir():
 			if arg_overwrite:
 				if arg_verbose: print(Fore.RED + f"\tOverwriting '{get_pathstring_with_parent(out_file)}'.")
 			else:
-				if arg_outpath.is_dir():
-					out_file = get_unique_filename(out_file)  # Create a unique filename for out_file.
-					if arg_verbose: print(Fore.RED + f"\tFile already exists, writing instead to: "
-													 f"'{get_pathstring_with_parent(out_file)}'.")
+				out_file = get_unique_filename(out_file)  # Create a unique filename for out_file.
+				if arg_verbose: print(Fore.RED + f"\tFile already exists, writing instead to: "
+												 f"'{get_pathstring_with_parent(out_file)}'.")
 
 		# Try processing the transcript. This loop is here to handle unidentified speakers. If a speaker can't be
 		# identified, ParseFileException is raised. Prompt for speaker name or use the default speaker, and reprocess.
@@ -367,17 +381,17 @@ def main(args):
 
 				# Write to separate files or append to one file, depending on arg_outpath.
 				out_file.parent.mkdir(parents=True, exist_ok=True)
-				if arg_outpath.is_dir():
+				if not write_single_file:
 					with open(out_file, 'w', encoding='utf-8') as file:
 						file.write(out_string)
-				else: #arg_outpath doesn't point to a dir, so every intput file writes to the same output. Append.
+				else:  # arg_outpath doesn't point to a dir, so every intput file writes to the same output. Append.
 					with open(out_file, 'a', encoding='utf-8') as file:
 						if len(success_list) == 0: file.truncate(0)  # Clear out_file if this is first file.
 						# Add header text for each new input transcript.
-						if len(in_out_paths) > 1: file.write(get_filename_header(in_file.stem))
-						else: file.write(out_string) #Else there's just one input file, so don't use
+						file.write(get_filename_header(in_file.stem))
+						file.write(out_string)  # Else there's just one input file, so don't use
 
-						if is_clipping: pyperclip.copy(out_string) #Add to system clipboard.
+						if is_clipping: pyperclip.copy(out_string)  # Add to system clipboard.
 
 				# Successfully processed and wrote transcript!
 				success = True  # Exit the while loop
@@ -388,8 +402,11 @@ def main(args):
 					total_speakers = len(found_speakers)
 					if total_speakers > 0:
 						print(
-							f"\tFound {total_speakers} speaker{"" if total_speakers == 1 else "s"}: {", ".join(names)}")
-					print(f"\tWrote {lines} lines to '{get_pathstring_with_parent(out_file)}'\n")
+							f"\tFound " + Fore.CYAN + F"{total_speakers} " + Fore.RESET +
+							f"speaker{"" if total_speakers == 1 else "s"}: " + Fore.CYAN + f"{", ".join(names)}")
+					print(f"\tWrote " + Fore.CYAN + f"{lines}" + Fore.RESET + " lines to " + Fore.CYAN +
+						  f"'{get_pathstring_with_parent(out_file)}'\n")
+
 					if is_clipping: print("Copied to clipboard.")
 
 			except ParseFileException as e:
@@ -402,7 +419,8 @@ def main(args):
 							test_speaker_num += 1
 						name = arg_extra[max_extra_speaker]
 						max_extra_speaker += 1
-					elif arg_interactive: name = input(f"\tName for {e.line}: ")
+					elif arg_interactive:
+						name = input(f"\tName for {e.line}: ")
 
 					speaker_map[e.line] = name  # Create a new entry in speaker_map
 				# Now return to while loop and re-process file with new speaker_map
@@ -442,7 +460,7 @@ def main(args):
 
 	if arg_verbose:
 		for pair in success_list: print(f"\t{get_pathstring_with_parent(pair[0])}" + Fore.CYAN + " ---> " +
-												Fore.RESET + f"{get_pathstring_with_parent(pair[1])}")
+										Fore.RESET + f"{get_pathstring_with_parent(pair[1])}")
 
 	if len(fail_list) > 0:
 		print(Fore.RED + f"Failed to process {len(fail_list)} {"files" if len(fail_list) != 1 else "file"}"
@@ -450,9 +468,11 @@ def main(args):
 		if arg_verbose:
 			for path in fail_list: print(f"\t{get_pathstring_with_parent(path)}")
 
+
 # ------------------- MAIN -------------------
 if __name__ == "__main__":
 	try:
+		init(autoreset=True)  # Set up colorama text colors
 		main(get_args())
 	except KeyboardInterrupt:
 		print(Fore.RED + "Operation cancelled by user.")

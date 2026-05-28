@@ -3,4 +3,4 @@ thefuzz~=0.22.1
 pydantic~=2.13.3
 pydantic-settings~=2.14.0
 pyperclip~=1.11.0
-polars~=1.40.1
+polars~=1.41.1
