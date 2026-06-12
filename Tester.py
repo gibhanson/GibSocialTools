@@ -9,9 +9,9 @@ from argparse import Namespace
 from colorama import Fore, init
 
 
-speaker_list = [[("Speaker 1", "Alice"), ("Speaker 2", "Bob")]]
+speaker_list = [[("Speaker 2", "Larry"), ("Speaker 3", "Josh")]]
 extra_speakers = ["Extra 1", "Extra 2", "Extra 3"]
-test_main_dir = Path("C:/Users/ghans/Desktop/TESTS/")
+test_main_dir = Path("F:/TESTS")
 source_dir = test_main_dir / "SOURCE"
 test_in_dir = test_main_dir / "TESTINPUT"
 test_out_dir = test_main_dir / "TESTOUTPUT"
@@ -44,325 +44,325 @@ class Tester(unittest.TestCase):
 
 	@patch('builtins.input')
 	def test_single_file(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir / "valid_transcript.txt",
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_dir_no_recursion(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_dir_overwrite(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=True,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
+		TextStripper.main(default_args)
 
 
 	@patch('builtins.input')
 	def test_dir_duplicate(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			 extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_dir_relative(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output="../" + test_main_dir.name + "/" + func_name(),
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			 extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_dir_relative_recursion(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output="../" + test_main_dir.name + "/" + func_name(),
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_overwrite_single(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir / "valid_transcript.txt",
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=True,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_recursion(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_noverbose(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=False,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_overwrite(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output="OUTPUT",
 			verbose=True,
 			overwrite=True,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	def test_interactive(self):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=True,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_wildcard(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir / "*",
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=speaker_list,
 			wildcard=True
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_wildcard_single(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir / "valid_*",
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			 extra=list(),
 			speakers=speaker_list,
 			wildcard=True
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_no_speakers(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=False,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=list(),
 			speakers=list(),
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_append(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir,
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir / "out.txt",
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			speakers=speaker_list,
 			wildcard=False,
 			extra = True,
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 	@patch('builtins.input')
 	def test_extra_speaker(self, mocked_input):
-		out_dir = test_out_dir / self.suite_name / func_name()
+		out_dir = test_out_dir / func_name()
 		print_test(func_name(), test_in_dir, out_dir)
 		default_args = Namespace(
 			path=test_in_dir / "unknown_speaker.txt",
-			extension=TextStripper5.DEFAULT_EXT,
+			extension=TextStripper.DEFAULT_EXT,
 			timecodes=False,
 			output=out_dir,
 			verbose=True,
 			overwrite=False,
 			interactive=False,
 			recursive=True,
-			label=TextStripper5.DEFAULT_LABEL,
+			label=TextStripper.DEFAULT_LABEL,
 			extra=extra_speakers,
 			speakers=speaker_list,
 			wildcard=False
 		)
-		TextStripper5.main(default_args)
+		TextStripper.main(default_args)
 
 
 

@@ -14,7 +14,6 @@ from colorama import Fore, init
 from pydantic import Field
 import argcomplete
 from argcomplete.completers import EnvironCompleter, ChoicesCompleter
-
 from pydantic_settings import (
 	BaseSettings,
 	PydanticBaseSettingsSource,
@@ -530,7 +529,6 @@ def get_pathstring_with_parent(path: Path) -> str:
 	"""
 	if path == path.parent: return path.name  # Check if we're at the root of the filesystem.
 	return path.parent.name + os.sep + path.name
-
 
 
 if __name__ == "__main__":

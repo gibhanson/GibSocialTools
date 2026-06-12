@@ -9,8 +9,7 @@ import seaborn as sns
 from colorama import Fore, init
 from polars import DataFrame
 
-data_duration: DataFrame
-
+data_duration: DataFrame #TODO: Let's not have this be a global.
 
 def get_args():
 	"""Parses command line arguments."""
@@ -82,12 +81,12 @@ def main(args):
 	# Filter for time period
 	data_duration = data_full.filter(pl.col("Date") >= pl.col("Date").max() - pl.duration(days=date_range))
 
-	# Create some interface-friendly versions of columns
-	data_duration = data_duration.with_columns(pl.Series(name="Long Program",
-														 values=data_duration["Participants"] + "\n" +
-																data_duration["Date"].dt.to_string("(%m/%d/%y)")))
+	# Create some display-friendly versions of columns
+	data_duration = data_duration.with_columns(pl.Series(name="Long Program", values=data_duration["Participants"] +
+														"\n" + data_duration["Date"].dt.to_string("(%m/%d/%y)")))
 	data_duration = data_duration.with_columns(pl.Series(name="Friendly Date",
 														 values=data_duration["Date"].dt.to_string("%m/%d/%y")))
+
 	newnames = []
 	dates = data_duration["Friendly Date"].to_list()
 	for i, n in enumerate(data_duration["Participants"].to_list()):
@@ -102,37 +101,36 @@ def main(args):
 	# Get live attendance chart
 	sns.set_palette("pastel")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, columnA="Registrations", columnB="Total Viewers", title="Total Viewers (Live Program)",
-			  trend=False)
-	plt.tight_layout(pad=5.0)
-	plt.show()
-
-	# Get total viewers and registrations chart
-	sns.set_palette("pastel")
-	# fig, ax = plt.subplots(figsize=(22, 8))
 	get_plots(data_duration, columnA="Registrations", columnB="Total Viewers",
-			  title="Total Viewers vs Registrations (Live Program)", trend=False)
+			  title=f"Live Audience ({get_daterange(data_duration)})",
+			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
 
 	# Get podcast chart
 	sns.set_palette("icefire")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, "Podcast Viewers", trend=False)
+	get_plots(data_duration, "Podcast Viewers",
+			  title=f"Podcast Viewers ({get_daterange(data_duration)})",
+			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
 
 	# Get YouTube episode viewership chart
 	sns.set_palette("tab20b_r")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, "YouTube Episode Viewers", "Episode Viewership (YouTube)", trend=False)
+	get_plots(data_duration, "YouTube Episode Viewers",
+			  f"Episode Viewership (YouTube) ({get_daterange(data_duration)})",
+			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
 
 	# Get Gib videos chart
 	sns.set_palette("pastel")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, "Total Gib Viewers", "Gib Video Viewership (YouTube)", trend=False)
+	get_plots(data_duration, "Total Gib Viewers",
+			  f"Gib Video Viewership (YouTube) ({get_daterange(data_duration)})",
+			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
 
