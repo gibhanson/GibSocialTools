@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch
 import unittest
-import TextStripper
+from OLD import TextStripper
 from argparse import Namespace
 from colorama import Fore, init
 
