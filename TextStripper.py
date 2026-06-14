@@ -1,4 +1,6 @@
 # TestStripper.py
+from __future__ import annotations
+
 import argparse, os, re, time
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -7,6 +9,8 @@ import pyperclip
 import sys
 import logging
 from timecode import Timecode
+from typing import TypedDict, Iterator  # TODO: Use more of this
+from typing import NamedTuple
 
 '''
 This program strips the speaker labels and timecodes from a text file produced by Adobe Premiere Pro's
@@ -34,6 +38,111 @@ class TimecodeHandlerType(StrEnum):
 	TC_ZERO = "Z"
 	TC_PRESERVE = "P"
 
+# TODO: Build some sort of speaker records class that removes need for this global variable.
+speaker_arg_counter = 0  # Incremented with each new speaker in arguments.
+
+class ParseFileException(Exception):
+	"""Exception thrown when the processFile function can't process a transcript file.
+	Wrapper around several file i/o exceptions"""
+
+	def __init__(self, message: str, code: int, line_num=0, line=""):
+		super().__init__(message)
+		self.code = code
+		self.line_num = line_num
+		self.line = line
+
+class SpeakerRecords:
+
+	class SpeakerDict(TypedDict):
+		identifier: str
+		name: str
+
+	def __init__(self, speakers: SpeakerDict):
+		self.original_speakers = speakers
+		self.speakers = speakers
+
+	#TODO: Implement.
+
+
+class FilesList:
+
+
+
+	class OverwriteEnum(IntEnum):
+		IS_OVERWRITING = 1
+		IS_RENAMED = 2
+
+	class FileIOPair(NamedTuple):
+		in_path: Path
+		out_path: Path
+		is_overwriting: FilesList.OverwriteEnum
+
+	files: list[FilesList.FileIOPair]
+	orig_out_path: Path
+	orig_in_path: Path
+
+
+	def __enter__(self):
+
+		# TODO: Check if they're transcripts.
+		return self  # Return the manager instance to the 'as' variable
+
+	def __iter__(self) -> Iterator[FileIOPair]:
+		"""Allows the class instance to be used directly in a for-loop."""
+		for src, dest, over in self.filepairs:
+			yield FilesList.FileIOPair(src, dest, over)
+
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		# This is GUARANTEED to run, even if a file in the middle crashes
+		if exc_type is not None:
+			print(f"⚠️ Warning: Iteration halted early due to error: {exc_val}")
+		else:
+			print("✅ All file pairs processed successfully.")
+
+		# Close any open file streams, release locks, or log metrics here
+		return False  # Let the calling function handle the crash if it wants to
+
+
+	def __init__(self, in_path: Path, out_path: Path = None, recursion: bool = False, overwrite: bool = False,
+				 append: bool = False):
+		try:
+			self.orig_in_path = in_path.resolve(strict=True)
+		except FileNotFoundError:
+			raise
+
+		self.orig_out_path = out_path if out_path is not None else in_path
+
+		if self.orig_in_path.is_dir():
+			if recursion: in_glob = self.orig_in_path.rglob(f"*.{DEFAULT_EXT}")
+			else: in_glob = self.orig_in_path.glob(f"*.{DEFAULT_EXT}")
+		elif self.orig_in_path.name.count("*"):
+			in_glob = self.orig_in_path.parent.glob(self.orig_in_path.name)
+		else:
+			in_glob = self.orig_in_path.glob(self.orig_in_path.name)
+
+		if overwrite:
+			for p in in_glob:
+				self.files = [FilesList.FileIOPair(in_path=p,
+													   out_path=get_unique_filename(out_path),
+													   is_overwriting=FilesList.OverwriteEnum.IS_RENAMED)]
+		else:
+			for p in in_glob:
+
+				if self.orig_out_path.exists:
+					if overwrite:
+						self.files = [FilesList.FileIOPair(in_path = in_path,
+															   out_path = get_unique_filename(out_path),
+																   is_overwriting=FilesList.OverwriteEnum.IS_RENAMED)]
+					else:
+						self.files = [FilesList.FileIOPair(in_path = in_path,
+															   out_path = get_unique_filename(out_path),
+															   is_overwriting=FilesList.OverwriteEnum.IS_RENAMED)]
+
+
+
+
+
+
 # Error logging for production.
 logging.basicConfig(
     filename="TextStripper_err.log",
@@ -58,20 +167,8 @@ def global_exception_handler(exctype, value, traceback):
 # Register the global handler
 sys.excepthook = global_exception_handler
 
-# TODO: Build some sort of speaker records class that removes need for this global variable.
-speaker_arg_counter = 0  # Incremented with each new speaker in arguments.
 
-class ParseFileException(Exception):
-	"""Exception thrown when the processFile function can't process a transcript file.
-	Wrapper around several file i/o exceptions"""
 
-	def __init__(self, message: str, code: int, line_num=0, line=""):
-		super().__init__(message)
-		self.code = code
-		self.line_num = line_num
-		self.line = line
-
-# TODO: We need to test if the timecode zeroing works
 def zero_timecode(current: str, starting: str) -> str:
 	"""Subtracts timecode strings. Strings are in the format found in lines from Adobe transcriptions, e.g.
 	'00:03:00:13 - 00:03:19:02'
@@ -94,8 +191,16 @@ def zero_timecode(current: str, starting: str) -> str:
 
 	# Return a new string matching Adobe transcription's format.
 	# TODO: This will probably include a column for hours...
-	return f"{tc_end[0] - tc_start[0]} - {tc_end[1] - tc_start[1]}"
-
+	time_result = ""
+	try:
+		time_result = f"{tc_end[0] - tc_start[0]} - {tc_end[1] - tc_start[1]}"
+	except ValueError as e:
+		if "not 0" in e.args[0]:
+			time_result = "00:00:00:00 - 00:00:00:00"
+		else:
+			raise
+	finally:
+		return time_result
 
 def get_unique_filename(original_path: Path) -> Path:
 	"""Takes a path. If a file with the same name already exists there, return a path with DEFAULT_UNIQUENAME, and
@@ -114,7 +219,7 @@ def get_unique_filename(original_path: Path) -> Path:
 
 	counter = 1
 	# If it already had a number, start our counter one higher
-	if len(split_filename[1]) > 1: counter = int(split_filename[1]) + 1
+	if len(split_filename) > 1: counter = int(split_filename[1]) + 1
 
 	# Test if file with the name exists, and increment the trailing number till a unique file is found.
 	while new_path.exists():
@@ -176,7 +281,7 @@ def is_transcript(path: Path) -> bool:
 	return False
 
 
-def parse_transcript(path: Path, speaker_map: dict, timecodes=TimecodeHandlerType.TC_REMOVE,
+def strip_transcript(path: Path, speaker_map: dict, timecodes=TimecodeHandlerType.TC_REMOVE,
 					 speaker_label=DEFAULT_LABEL) -> tuple[dict, str]:
 	"""
 	Reads through a transcript file, replaces speaker labels with proper names, and,
@@ -224,7 +329,7 @@ def parse_transcript(path: Path, speaker_map: dict, timecodes=TimecodeHandlerTyp
 				# Line isn't a speaker label or timecode, so just append it to the output.
 				output += line + "\n"
 
-			return found_speakers, output
+			return found_speakers, output.strip()
 
 	except FileNotFoundError as e:
 		raise ParseFileException(f"File doesn't exist: '{e.filename}'", PFEErrorCode.NONEXISTANT)
@@ -403,7 +508,7 @@ def main(args):
 		success = False
 		while not success:
 			try:
-				found_speakers, out_string = parse_transcript(in_file, speaker_map, timecodes=arg_timecodes,
+				found_speakers, out_string = strip_transcript(in_file, speaker_map, timecodes=arg_timecodes,
 															  speaker_label=arg_label)
 				lines = len(out_string.splitlines())
 
