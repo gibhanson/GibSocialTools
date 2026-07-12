@@ -1,19 +1,56 @@
 # SocialLookup.py
 # PYTHON_ARGCOMPLETE_OK
 from __future__ import annotations
-import datetime
+
+import sys
+
+# --- Fast-path for PowerShell tab-completion ---
+# This must run before any heavy imports (polars, pydantic, thefuzz, colorama, argcomplete)
+# since process-startup latency directly affects Tab-press responsiveness.
+if "--_complete-names" in sys.argv:
+	import csv
+	import json
+	import os
+	from pathlib import Path
+
+	_here = Path(__file__).resolve().parent
+	_config_path = _here / "sociallookup_config.json"
+	_db_path = _here / "socials.csv"  # default, matches AppSettings default
+
+	if _config_path.exists():
+		try:
+			with open(_config_path, "r") as f:
+				_cfg = json.load(f)
+				if "database_path" in _cfg:
+					_db_path = Path(_cfg["database_path"])
+		except (json.JSONDecodeError, OSError):
+			pass  # fall back to default path
+
+	try:
+		with open(_db_path, "r", newline="", encoding="utf-8") as f:
+			reader = csv.DictReader(f)
+			for row in reader:
+				name = row.get("Name")
+				if name:
+					print(name)
+	except (FileNotFoundError, OSError):
+		pass  # No database yet — just return nothing to complete
+
+	sys.exit(0)
+# --- End fast-path ---
+
+from datetime import datetime
 import json
 import os, sys, argparse, hashlib
 from urllib.parse import urlparse
 from pathlib import Path
-from typing import Tuple, Type, Any
-from polars import col, DataFrame
+from typing import Tuple, Type, Any, NamedTuple
 from thefuzz import process, fuzz
-import polars as pl
+import sqlite3 as sql
 from colorama import Fore, init
 from pydantic import Field
 import argcomplete
-from argcomplete.completers import EnvironCompleter, ChoicesCompleter
+from argcomplete.completers import ChoicesCompleter
 from pydantic_settings import (
 	BaseSettings,
 	PydanticBaseSettingsSource,
@@ -21,18 +58,41 @@ from pydantic_settings import (
 	JsonConfigSettingsSource
 )
 
+# TODO: implement a backup?
+# TODO: Create an interactive version of "add" when only the -a is supplied.
+
+
 CONFIG_PATH = Path(__file__).resolve().parent / "sociallookup_config.json"  # By default, look next to this py file.
+
+
+class Record(NamedTuple):
+	ID: str
+	Time: datetime
+	Name: str
+	Twitter: str | None = None
+	BlueSky: str | None = None
+	Facebook: str | None = None
+	Website: str | None = None
+	Instagram: str | None = None
+	Description: str | None = None
+
+	@classmethod
+	def from_row(cls, row: sql.Row) -> "Record":
+		data = {k: row[k] for k in row.keys()}
+		data["Time"] = datetime.fromisoformat(data["Time"])
+		return cls(**data)
 
 
 class Records:
 	"""Handles the reading and writing of a .csv database of social media records."""
 
-	data: pl.DataFrame
+	conn: sql.Connection
+	cur = sql.Cursor
+
 	config: AppSettings
 
 	def __init__(self, settings: AppSettings):
 		self.config = settings
-		self.data = pl.DataFrame()
 
 	def __enter__(self) -> 'Records':
 		self.load()
@@ -42,13 +102,15 @@ class Records:
 		self.save()
 
 	def __str__(self):
-		return str(self.data)
+		return self.get_records_string(self.get_all())
 
 	def load(self):
-		# TODO: implement a backup?
+
 		if Path(self.config.database_path).exists():
-			self.data = pl.read_csv(self.config.database_path, infer_schema_length=0)
-			self.data = self.data.with_columns(pl.col("Time").str.to_datetime(strict=False))
+
+			self.conn = sql.connect(self.config.database_path)
+			self.conn.row_factory = sql.Row
+			self.cur = self.conn.cursor()
 
 		else:
 			raise FileNotFoundError(f"{self.config.database_path}", self.config.database_path)
@@ -56,45 +118,45 @@ class Records:
 	def save(self):
 		"""Saves both the database and config file."""
 		self.config.save()
-		self.data.write_csv(self.config.database_path)
+		self.conn.commit()
+		self.conn.close()
 
-	def get_records_string(self, records: DataFrame):
-		"""Returns a string of social records in an easily readable form, intended for CLI output.
-		:param records: Dataframes containing records to print.
+	def get_records_string(self, records: Record | list[Record]) -> str:
 		"""
-		init(autoreset=True)  # Set up colorama text colors
+		Returns one or more records in an easily readable form, intended for CLI output.
+		:param records: A single Record, or a list of Records, to format.
+		"""
+		if isinstance(records, Record):
+			records = [records]
 
-		out = ""
+		return "\n".join(self._format_record(r) for r in records)
 
-		for index, row in enumerate(records.iter_rows(named=True)):
-			out += Fore.GREEN + f"{row['Name']}: " + Fore.RESET + f"[{row['ID']}]\n"
+	def _format_record(self, record: Record) -> str:
+		"""Formats a single Record. Internal helper for get_records_string."""
+		from colorama import Fore, init
+		init(autoreset=True)
 
-			for col in records.columns:
-				if col in self.config.platform_names:
-					social_list_index = self.config.platform_names.index(col)
-					platform = self.config.platform_names[social_list_index]
+		out = Fore.GREEN + f"{record.Name}: " + Fore.RESET + f"[{record.ID}]\n"
 
-					if row[col] is not None:
-						handle = ""
-						url = ""
+		for platform in self.config.platform_names:
+			handle = getattr(record, platform, None)
+			if handle is not None:
+				url = None
+				display = handle
 
-						if platform == "website":
-							url = row[col]
-							parts = urlparse(url)
-							handle = f"{parts.netloc}{parts.path}"
-						else:
-							handle = row.get(col)
-							url = get_url(platform, handle)
+				if platform == "Website":
+					parts = urlparse(handle)
+					display = f"{parts.netloc}{parts.path}"
+					url = handle
+				else:
+					url = get_url(platform, handle)
 
-						if url and "WT_SESSION" in os.environ:
-							out += Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{format_link(handle, url)}"
+				if url and "WT_SESSION" in os.environ:
+					out += Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{format_link(display, url)}"
+				else:
+					out += Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{display}\n"
 
-						else:
-							out += Fore.CYAN + f"\t{platform}: " + Fore.RESET + f"{handle}\n"
-
-			out += f"\tUpdated {row["Time"].strftime('%a %b %d, %Y (%H:%M:%S)')}\n"
-			if index != records.height - 1: out += "\n"
-
+		out += f"\tUpdated {record.Time.strftime('%a %b %d, %Y (%H:%M:%S)')}\n"
 		return out
 
 	def get_platform_names(self) -> list[str]:
@@ -119,121 +181,128 @@ class Records:
 
 		self.config.save()
 
-	def get_all(self) -> DataFrame:
-		"""Returns a DataFrame containing ALL records from the database."""
-		return self.data
+	def get_all(self) -> list[Record]:
+		"""Returns list[Record] containing ALL records from the database."""
+		self.cur.execute("SELECT * FROM sociallookup")
+		return [Record.from_row(row) for row in self.cur.fetchall()]
 
-	def get_all_names(self) -> list:
-		return self.data['Name'].to_list()
+	def get_all_names(self) -> list[Record]:
+		cur = self.conn.execute("SELECT * FROM socials")
+		return cur.fetchall()
 
-	def add(self, name: str, socials_dict: dict) -> str:
+	def add(self, record: Record) -> str:
 		"""
 		Updates a record with modified social handles, or creates a new record
-		if a record for 'name' doesn't exist.
-		:param name: The name of the record.
-		:param socials_dict: dictionary of social records to add. (Platform Name: Handle)
-		:returns: the ID of added/modified record.
+		if a record for this ID doesn't exist yet.
+		:param record: The Record to add or update. record.ID is generated from record.Name
+						if not already set correctly by the caller.
+		:returns: the ID of the added/modified record.
 		"""
-		hash_id = Records.generate_id(name)
-		now = datetime.datetime.now()
-		updates = {}
+		hash_id = Records.generate_id(record.Name)
+		now = datetime.now()
 
-		lowered_socials_dict = {k.lower(): v for k, v in socials_dict.items()}
+		record = record._replace(ID=hash_id, Time=now)
 
-		# For each valid platform in socials_dict, add it to updates.
-		for col in self.data.columns:
-			if col.lower() in lowered_socials_dict.keys():
-				updates[col] = lowered_socials_dict[col.lower()]
-			else:
-				# noinspection PyTypeChecker
-				updates[col] = None
-		updates.update({'Name': name, 'ID': hash_id, "Time": now})
+		cur = self.conn.execute("SELECT 1 FROM socials WHERE ID = ?", (hash_id,))
+		exists = cur.fetchone() is not None
 
-		if hash_id in self.data["ID"]:  # If a record with this hash id already exists, update the record
-			expressions = [
-				pl.when(pl.col("ID") == hash_id)
-				.then(
-					pl.when(pl.lit(val).is_not_null())
-					.then(pl.lit(val))
-					.otherwise(pl.col(key))
-				)
-				.otherwise(pl.col(key))
-				.alias(key)
-				for key, val in updates.items()
-			]
+		if exists:
+			self.conn.execute("""
+	            UPDATE socials
+	            SET Time = ?, Name = ?, Twitter = ?, BlueSky = ?, Facebook = ?,
+	                Website = ?, Instagram = ?, Description = ?
+	            WHERE ID = ?
+	        """, (
+				record.Time.isoformat(), record.Name, record.Twitter, record.BlueSky,
+				record.Facebook, record.Website, record.Instagram, record.Description,
+				hash_id
+			))
+		else:
+			self.conn.execute("""
+	            INSERT INTO socials (ID, Time, Name, Twitter, BlueSky, Facebook, Website, Instagram, Description)
+	            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	        """, (
+				hash_id, record.Time.isoformat(), record.Name, record.Twitter, record.BlueSky,
+				record.Facebook, record.Website, record.Instagram, record.Description
+			))
 
-			self.data = self.data.with_columns(expressions)
-
-		else:  # Otherwise, create a new record.
-			new_row = pl.DataFrame([updates])
-			new_row = new_row.select(self.data.columns)
-			# new_row = new_row.cast(self.records.schema)
-			self.data = self.data.vstack(new_row)
-
-		self.save()
 		return hash_id
 
-	def remove(self, name: str, platforms: list) -> DataFrame:
+	def rollback(self):
+		"""Rolls back the changes to the database."""
+		self.conn.rollback()
+
+	def remove(self, name: str, platforms: list) -> Record:
 		"""
 		Removes the handle for a particular platform from a record.
-		:param name: The name of the record to remove.
+		:param name: The name of the record to remove the platform handles from.
 		:param platforms: The list of platforms to remove.
-		:returns: A dataframe containing the updated record.
+		:returns: The updated record.
 		:raises KeyError: if 'name' doesn't exist.
 		"""
-		if name not in self.data["Name"]:
-			raise KeyError(f"'{name}' not found in database.")
-
 		hash_id = Records.generate_id(name)
-		updates = {'Name': name, 'ID': hash_id}
+
+		cur = self.conn.execute("SELECT * FROM socials WHERE ID = ?", (hash_id,))
+		row = cur.fetchone()
+		if row is None:
+			raise KeyError(f"'{name}' not found in database.")
 
 		for platform in platforms:
 			if platform in self.config.platform_names:
-				self.data = self.data.with_columns(
-					pl.when(pl.col("ID") == hash_id)
-					.then(pl.lit(None))
-					.otherwise(pl.col(platform))
-					.alias(platform)
+				# Column names can't be parameterized with '?' in sqlite3 -- only values can.
+				# This is safe here because 'platform' is checked against the known-good
+				# self.config.platform_names allowlist above, not raw user input passed straight through.
+				self.conn.execute(
+					f"UPDATE socials SET {platform} = NULL WHERE ID = ?",
+					(hash_id,)
 				)
 
-		return self.data.filter(col("ID") == hash_id)
+		cur = self.conn.execute("SELECT * FROM socials WHERE ID = ?", (hash_id,))
+		return Record.from_row(cur.fetchone())
 
-	def delete(self, name: str) -> DataFrame:
+	def delete(self, name: str) -> Record:
 		"""
 		Remove a record from the database based on name.
 		:param name: The name of the record to remove.
 		:returns: A copy of the removed record.
 		:raises KeyError: if 'name' doesn't exist.
 		"""
-		if name not in self.data["Name"]:
+		cur = self.conn.execute("SELECT * FROM socials WHERE NAME = ?", (name,))
+		rows = cur.fetchone()
+
+		if len(rows) == 0:
 			raise KeyError(f"'{name}' not found in database.")
+		elif len(rows) > 1:
+			raise KeyError(f"'{name}' returned too many records ({len(rows)}).")
 
-		hash_id = self.data.filter(pl.col("Name") == name).select("ID").item()
-		removed = self.drop(hash_id)
+		record = Record.from_row(rows[0])
 
-		if removed.is_empty:
-			raise KeyError(f"ID '{hash_id}' not found in database.")
-		else:
-			return removed
+		self.conn.execute("DELETE FROM socials WHERE ID = ?", (name,))
 
-	def drop(self, hash_id: str) -> DataFrame:
+		return record
+
+	def drop(self, hash_id: str) -> Record:
 		"""
 		Remove a record from the database based on a hash ID.
 		:param hash_id: The name of the record to remove.
 		:returns: A copy of the removed record.
 		:raises KeyError: if 'name' doesn't exist.
 		"""
-		record = self.data.filter(pl.col("ID") == hash_id)
+		cur = self.conn.execute("SELECT * FROM socials WHERE ID = ?", (hash_id,))
+		rows = cur.fetchall()
 
-		if record.height == 0:
+		if len(rows) == 0:
 			raise KeyError(f"'{hash_id}' not found in database.")
-		elif record.height > 1:
-			raise KeyError(f"'{hash_id}' returned too many records ({record.height}).")
+		elif len(rows) > 1:
+			raise KeyError(f"'{hash_id}' returned too many records ({len(rows)}).")
 
-		self.data = self.data.filter(pl.col("ID") != hash_id)
+		record = Record.from_row(rows[0])
+
+		self.conn.execute("DELETE FROM socials WHERE ID = ?", (hash_id,))
+
 		return record
 
-	def get_by_name(self, name: str) -> DataFrame:
+	def get_by_name(self, name: str) -> Record:
 		"""
 		Returns a record from the database based on a name. 'name' must be an exact
 		match in the database. (case-insensitive).
@@ -242,11 +311,13 @@ class Records:
 		:raises KeyError: if 'name' doesn't exist in the database, or if the database is corrupt and
 		multiple records match the name.
 		"""
-		record = self.data.filter(pl.col("Name").str.to_lowercase() == name.lower())
-		if record.is_empty:
+		cur = self.conn.execute("SELECT 1 FROM socials WHERE NAME = ?", (name,))
+		row = cur.fetchone()
+
+		if row is None:
 			raise KeyError(f"'{name}' not found in database.")
-		else:
-			return record
+		return Record.from_row(row)
+
 
 	def get_id(self, name: str) -> str:
 		"""
@@ -256,27 +327,25 @@ class Records:
 		:raises KeyError: if 'name' doesn't exist in the database, or if the database is corrupt and
 		multiple records match the name.
 		"""
-		record = self.data.filter(pl.col("Name").str.to_lowercase() == name.lower())
-		if record.height == 0:
+
+		cur = self.conn.execute("SELECT * FROM socials WHERE NAME = ?", (name,))
+		row = cur.fetchone()
+
+		if row is None:
 			raise KeyError(f"'{name}' not found in database.")
-		elif record.height > 1:
-			raise KeyError(f"'{name}' returned too many records ({record.height}).")
+		return Record.from_row(row).ID
 
-		return record.item(0, "ID")
 
-	def search_single(self, name: str) -> DataFrame:
+	def search_single(self, name: str) -> Record:
 		"""
 		Performs a fuzzy search of the database's 'name' column and returns the BEST match.
 		:param name: Name of the record to look up.
-		:returns: DataFrame containing the record from the database.
+		:returns: Record matching the name
 		"""
-		choices = self.data['Name'].to_list()
-		results = process.extractOne(name, choices, scorer=fuzz.token_set_ratio)
-		matched_names = [match[0] for match in results]
+		records = self.search(name)
+		return records[0] if records else None
 
-		return self.data[self.data['Name'].is_in(matched_names)].clone()
-
-	def search(self, name: str, cutoff: int = None) -> DataFrame:
+	def search(self, name: str, cutoff: int = None) -> list[Record]:
 		"""
 		Performs a fuzzy search of the database's 'name' column and returns ALL matches with
 		similarities greater than 'cutoff'.
@@ -286,23 +355,35 @@ class Records:
 		"""
 		if not cutoff: cutoff = self.config.score_cutoff
 
-		choices = self.data['Name'].to_list()
+		cur = self.conn.execute("SELECT Name FROM socials")
+		choices = [row["Name"] for row in cur.fetchall()]
+
 		results = process.extractBests(name, choices, scorer=fuzz.token_set_ratio, score_cutoff=cutoff)
 		matched_names = [r[0] for r in results]
 
-		return self.data.filter(pl.col("Name").is_in(matched_names))
+		if not matched_names:
+			return []
 
-	def get_by_id(self, id_hash: str) -> DataFrame:
+		placeholders = ", ".join("?" for _ in matched_names)
+		cur = self.conn.execute(
+			f"SELECT * FROM socials WHERE Name IN ({placeholders})",
+			matched_names
+		)
+		records = [Record.from_row(row) for row in cur.fetchall()]
+		return records
+
+	def get_by_id(self, id_hash: str) -> Record:
 		"""Returns a record from the database based on a hash ID.
 		:param id_hash: The hash ID of the record to look up.
-		:returns: DataFrame containing the record from the database.
+		:returns: The Record matching the given hash ID.
 		:raises KeyError: if 'id_hash' doesn't exist in the database.
 		"""
-		record = self.data.filter(pl.col("ID") == id_hash)
-		if record.is_empty():
+		cur = self.conn.execute("SELECT * FROM socials WHERE ID = ?", (id_hash,))
+		row = cur.fetchone()
+
+		if row is None:
 			raise KeyError(f"'{id_hash}' not found in database.")
-		else:
-			return record
+		return Record.from_row(row)
 
 	@staticmethod
 	def generate_id(name: str) -> str:
@@ -359,17 +440,21 @@ class ArgHandler:
 		group.add_argument("-d", "--drop", default=False, action="store_const",
 						   const=ArgHandler.handle_drop, dest="handler",
 						   help="Delete an entire entry. Requires that the Name parameter be an exact match.")
-		group.add_argument("-id", "--id", nargs=1, action=ArgHandler.HandleIDAction, metavar="ID",
-						   help="Retrieve the hash ID of a social record by name. "
-								"Requires that the Name parameter be an exact match.")
 		group.add_argument("-c", "--cutoff", type=int, default=70,
 						   help="Search cutoff for fuzzy searching (0 - 100). Lower is less strict. Default is 70.")
+
+		group.add_argument("--_complete-names", action="store_true", dest="complete_names",
+						   help=argparse.SUPPRESS)  # Hidden: used by PowerShell completer
 
 		parser.set_defaults(handler=ArgHandler.handle_default)
 
 		argcomplete.autocomplete(parser)
 		args = parser.parse_args()
 
+		if getattr(args, "complete_names", False):
+			for name in db.get_all_names():
+				print(name)
+			sys.exit(0)
 
 		if isinstance(args.name, list):  # Make it so the name parameter doesn't need to be in quotation marks
 			args.name = " ".join(args.name)
@@ -385,8 +470,27 @@ class ArgHandler:
 			socials = {}
 			for item in args.add:
 				entry = pair(item)
-				socials[entry[0]] = entry[1]
-			hash_id = db.add(args.name, socials)
+				platform, handle = entry[0], entry[1]
+
+				# Normalize against known platform names so casing doesn't matter
+				# (e.g. "twitter:@x" should still match the "Twitter" field).
+				matched = next(
+					(p for p in db.config.platform_names if p.lower() == platform.lower()),
+					None
+				)
+				if matched is None:
+					raise ValueError(f"'{platform}' is not a recognized platform.")
+
+				socials[matched] = handle
+
+			record = Record(
+				ID="",
+				Time=datetime.now(),
+				Name=args.name,
+				**socials
+			)
+
+			hash_id = db.add(record)
 			print(db.get_records_string(db.get_by_id(hash_id)))
 
 
@@ -420,15 +524,6 @@ class ArgHandler:
 
 
 	@staticmethod
-	def handle_id(db: Records, args):
-		"""Handles retrieving a record by its hash ID instead of a name."""
-		if not args.name:
-			raise ValueError("Name must be provided.")
-		else:
-			print(db.get_records_string(db.get_by_id(args.name)))
-
-
-	@staticmethod
 	def handle_default(db: Records, args):
 		"""Handles the default program behavior. Fuzzy search for a name or list everything."""
 		if not args.name:
@@ -436,7 +531,7 @@ class ArgHandler:
 			print(out)
 		else:
 			found = db.search(args.name)
-			if found.height > 0:
+			if len(found) > 0:
 				print(db.get_records_string(db.search(args.name)))
 			else:
 				print("Error: No records found.")
@@ -555,9 +650,12 @@ if __name__ == "__main__":
 	except PermissionError as e:
 		print(f"Error: Permission denied:")
 		print("\t" + Fore.RED + f"{e.filename}")
-	except pl.exceptions.NoDataError as e:
-		print("Error: The CSV file exists but is empty or corrupt:")
-		print("\t" + Fore.RED + str(db.config.database_path))
+	except sql.IntegrityError as e:
+		print(Fore.RED + "That record already exists or violates a constraint.")
+	except sql.OperationalError as e:
+		print(Fore.RED + f"Database error: {e}")
+	except sql.Error as e:  # catch-all for anything else sqlite-specific
+		print(Fore.RED + f"Unexpected database error: {e}")
 	except KeyboardInterrupt:
 		print("Operation cancelled by user.")
 		exit(1)

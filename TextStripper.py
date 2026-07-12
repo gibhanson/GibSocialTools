@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse, os, re, time
-from enum import IntEnum, StrEnum
+from enum import IntEnum, StrEnum, Flag, auto
 from pathlib import Path
 from colorama import Fore, init
 import pyperclip
@@ -18,13 +18,21 @@ This program strips the speaker labels and timecodes from a text file produced b
 '''
 
 # TODO: Convert the timecodes regex system over to the timecode library.
-# TODO: Currently this regex doesn't handle timecodes with an hours column.
 # Regex matching timecodes, e.g. 00:01:22:08 - 00:01:38:09
 TIMECODE_PATTERN = "^[0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2} - [0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2}"
 DEFAULT_EXT = ".txt"  # Default filename extension
-DEFAULT_LABEL = "Speaker"  # Default speaker label to match in transcripts.
+DEFAULT_LABEL = "Speaker"  # Default speaker input_label to match in transcripts.
 SEPARATOR = "-"  # Used when appending several transcripts to a single output file, to delineate transcript names.
 DEFAULT_UNIQUENAME = "stripped"
+
+
+# Error logging for production.
+logging.basicConfig(
+	filename=Path(__file__).resolve().parent / "TextStripper_err.log",
+	level=logging.ERROR,
+	format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 
 # Error codes for ParseFileException
 class PFEErrorCode(IntEnum):
@@ -32,14 +40,17 @@ class PFEErrorCode(IntEnum):
 	FILE_ERROR = 2
 	SPEAKER_ERROR = 3
 
+
 # Handler for command line args defining how to treat timecodes in a transcript
 class TimecodeHandlerType(StrEnum):
 	TC_REMOVE = "R"
 	TC_ZERO = "Z"
 	TC_PRESERVE = "P"
 
+
 # TODO: Build some sort of speaker records class that removes need for this global variable.
 speaker_arg_counter = 0  # Incremented with each new speaker in arguments.
+
 
 class ParseFileException(Exception):
 	"""Exception thrown when the processFile function can't process a transcript file.
@@ -51,104 +62,6 @@ class ParseFileException(Exception):
 		self.line_num = line_num
 		self.line = line
 
-class SpeakerRecords:
-
-	class SpeakerDict(TypedDict):
-		identifier: str
-		name: str
-
-	def __init__(self, speakers: SpeakerDict):
-		self.original_speakers = speakers
-		self.speakers = speakers
-
-	#TODO: Implement.
-
-
-class FilesList:
-
-
-
-	class OverwriteEnum(IntEnum):
-		IS_OVERWRITING = 1
-		IS_RENAMED = 2
-
-	class FileIOPair(NamedTuple):
-		in_path: Path
-		out_path: Path
-		is_overwriting: FilesList.OverwriteEnum
-
-	files: list[FilesList.FileIOPair]
-	orig_out_path: Path
-	orig_in_path: Path
-
-
-	def __enter__(self):
-
-		# TODO: Check if they're transcripts.
-		return self  # Return the manager instance to the 'as' variable
-
-	def __iter__(self) -> Iterator[FileIOPair]:
-		"""Allows the class instance to be used directly in a for-loop."""
-		for src, dest, over in self.filepairs:
-			yield FilesList.FileIOPair(src, dest, over)
-
-	def __exit__(self, exc_type, exc_val, exc_tb):
-		# This is GUARANTEED to run, even if a file in the middle crashes
-		if exc_type is not None:
-			print(f"⚠️ Warning: Iteration halted early due to error: {exc_val}")
-		else:
-			print("✅ All file pairs processed successfully.")
-
-		# Close any open file streams, release locks, or log metrics here
-		return False  # Let the calling function handle the crash if it wants to
-
-
-	def __init__(self, in_path: Path, out_path: Path = None, recursion: bool = False, overwrite: bool = False,
-				 append: bool = False):
-		try:
-			self.orig_in_path = in_path.resolve(strict=True)
-		except FileNotFoundError:
-			raise
-
-		self.orig_out_path = out_path if out_path is not None else in_path
-
-		if self.orig_in_path.is_dir():
-			if recursion: in_glob = self.orig_in_path.rglob(f"*.{DEFAULT_EXT}")
-			else: in_glob = self.orig_in_path.glob(f"*.{DEFAULT_EXT}")
-		elif self.orig_in_path.name.count("*"):
-			in_glob = self.orig_in_path.parent.glob(self.orig_in_path.name)
-		else:
-			in_glob = self.orig_in_path.glob(self.orig_in_path.name)
-
-		if overwrite:
-			for p in in_glob:
-				self.files = [FilesList.FileIOPair(in_path=p,
-													   out_path=get_unique_filename(out_path),
-													   is_overwriting=FilesList.OverwriteEnum.IS_RENAMED)]
-		else:
-			for p in in_glob:
-
-				if self.orig_out_path.exists:
-					if overwrite:
-						self.files = [FilesList.FileIOPair(in_path = in_path,
-															   out_path = get_unique_filename(out_path),
-																   is_overwriting=FilesList.OverwriteEnum.IS_RENAMED)]
-					else:
-						self.files = [FilesList.FileIOPair(in_path = in_path,
-															   out_path = get_unique_filename(out_path),
-															   is_overwriting=FilesList.OverwriteEnum.IS_RENAMED)]
-
-
-
-
-
-
-# Error logging for production.
-logging.basicConfig(
-    filename="TextStripper_err.log",
-    level=logging.ERROR,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
 
 def global_exception_handler(exctype, value, traceback):
 	"""Error handler for global exceptions."""
@@ -164,11 +77,11 @@ def global_exception_handler(exctype, value, traceback):
 	print("The error has been logged, and our team will look into it. Please try again later.\n")
 	sys.exit(1)
 
+
 # Register the global handler
 sys.excepthook = global_exception_handler
 
-
-
+#TODO: This math is all wrong.
 def zero_timecode(current: str, starting: str) -> str:
 	"""Subtracts timecode strings. Strings are in the format found in lines from Adobe transcriptions, e.g.
 	'00:03:00:13 - 00:03:19:02'
@@ -183,14 +96,12 @@ def zero_timecode(current: str, starting: str) -> str:
 	current_list = current.strip().split(" - ", 2)
 	starting_list = starting.strip().split(" - ", 2)
 
-	# TODO: Make this all work with longer (hour included) times
 	# TODO: Inlude framerate as cmd line param?
 	# Convert to a list of Timecode times.
 	tc_start = [Timecode('24', "00:" + current_list[0]), Timecode('24', "00:" + current_list[1])]
 	tc_end = [Timecode('24', "00:" + starting_list[0]), Timecode('24', "00:" + starting_list[1])]
 
 	# Return a new string matching Adobe transcription's format.
-	# TODO: This will probably include a column for hours...
 	time_result = ""
 	try:
 		time_result = f"{tc_end[0] - tc_start[0]} - {tc_end[1] - tc_start[1]}"
@@ -201,6 +112,7 @@ def zero_timecode(current: str, starting: str) -> str:
 			raise
 	finally:
 		return time_result
+
 
 def get_unique_filename(original_path: Path) -> Path:
 	"""Takes a path. If a file with the same name already exists there, return a path with DEFAULT_UNIQUENAME, and
@@ -257,7 +169,7 @@ def speaker_pair(arg_string: str):
 	if re.search(r"(\d+)=", arg_string):  # Find pattern, e.g. '1=John'
 		parts = arg_string.split('=', 1)  # Split along the =
 		if len(parts) != 2: raise argparse.ArgumentTypeError(f"'{arg_string}' must be 'XXX=Name' or just 'Name'.")
-		label = f"{DEFAULT_LABEL} " + parts[0]  # Use our default label
+		label = f"{DEFAULT_LABEL} " + parts[0]  # Use our default input_label
 		return label, parts[1]
 	else:
 		return f"{DEFAULT_LABEL} {speaker_arg_counter}", arg_string
@@ -294,7 +206,7 @@ def strip_transcript(path: Path, speaker_map: dict, timecodes=TimecodeHandlerTyp
 	a string containing the processed text.
 	:raises ProcessFileException: If processing fails.
 	"""
-	found_speakers = dict()  # Keep a ledger of label/speaker pairs found in this transcript.
+	found_speakers = dict()  # Keep a ledger of input_label/speaker pairs found in this transcript.
 	first_timecode = ""
 	try:
 
@@ -304,32 +216,36 @@ def strip_transcript(path: Path, speaker_map: dict, timecodes=TimecodeHandlerTyp
 			for line_num, line in enumerate(file, start=1):
 				line = line.strip()
 
+				if line == "":
+					output += "\n"
+					continue
+
 				# Check if the line is a timecode
 				if re.search(TIMECODE_PATTERN, line):
 					if first_timecode == "": first_timecode = line.strip()
 					match timecodes:
 						case TimecodeHandlerType.TC_REMOVE:
-							output += "\n"
+							continue #Do nothing, just continue to next line.
 						case TimecodeHandlerType.TC_ZERO:
 							output += zero_timecode(line, first_timecode) + "\n"
 						case TimecodeHandlerType.TC_PRESERVE:
 							output += line + "\n"
 					continue
 
-				# Check if line is a speaker label
+				# Check if line is a speaker input_label
 				if re.match(rf"^{speaker_label} (\d+)", line):
-					if line in speaker_map:  # Speaker label found in speaker_map
+					if line in speaker_map:  # Speaker input_label found in speaker_map
 						if not line in found_speakers: found_speakers[line] = speaker_map[line]
 						output += speaker_map[line] + "\n"
 						continue
 					else:  # We've encountered an unidentified speaker.
-						raise ParseFileException(f"Improper speaker label '{line}'",
+						raise ParseFileException(f"Improper speaker input_label '{line}'",
 												 code=PFEErrorCode.SPEAKER_ERROR, line_num=line_num, line=line)
 
-				# Line isn't a speaker label or timecode, so just append it to the output.
+				# Line isn't a speaker input_label or timecode, so just append it to the output.
 				output += line + "\n"
 
-			return found_speakers, output.strip()
+			return found_speakers, output
 
 	except FileNotFoundError as e:
 		raise ParseFileException(f"File doesn't exist: '{e.filename}'", PFEErrorCode.NONEXISTANT)
@@ -345,22 +261,22 @@ def get_args():
 												 'video sequences. Can optionally replace speaker labels '
 												 f'(e.g. \'{DEFAULT_LABEL} 1\') with proper names, and consolidate '
 												 f'multiple transcripts into one output file.')
-	parser.add_argument("path", type=Path,
+	parser.add_argument("-p", "--path", type=Path, default=Path.cwd(),
 						help="path to transcript file or directory containing transcript files. Supports"
 							 "wildcard '*' matching.")
 	parser.add_argument("-e", "--extension", type=str, default=DEFAULT_EXT,
 						help=f"filename extension for directory processing, default is '{DEFAULT_EXT}'")
-	parser.add_argument("-o", "--output", type=str,
+	parser.add_argument("-o", "--output", type=Path,
 						help="output filename or directory. Can be relative to input directory.")
 	parser.add_argument("-r", "--recursive", default=False, action="store_true",
 						help="search subdirectories recursively for transcript files.")
 	parser.add_argument("-s", "--speakers", default=[], type=speaker_pair, action="append",
-						nargs='+', help="speaker label and name, e.g. '1=John' or just 'John' "
+						nargs='+', help="speaker input_label and name, e.g. '1=John' or just 'John' "
 										"(with automatic numbering).")
 	parser.add_argument("-x", "--overwrite", default=False, action="store_true",
 						help="overwrite existing files")
-	parser.add_argument("-l", "--label", type=str, default=DEFAULT_LABEL,
-						help=f"speaker label (to match in transcripts). Default is '{DEFAULT_LABEL}'")
+	parser.add_argument("-l", "--input_label", type=str, default=DEFAULT_LABEL,
+						help=f"speaker input_label (to match in transcripts). Default is '{DEFAULT_LABEL}'")
 	parser.add_argument("-ex", "--extra", default=[], type=str, action="append",
 						nargs='+', help="extra speaker names for missing speakers.")
 	parser.add_argument("-t", "--timecodes", type=str,
@@ -374,13 +290,14 @@ def get_args():
 
 
 def main(args):
+
 	# Get arguments from argparse into local variables
 	# TODO: Do we need this? Would it make more sense just to reference args.xxxx?
 	arg_ext = args.extension
 	arg_timecodes = args.timecodes
 	arg_overwrite = args.overwrite
 	arg_recursive = args.recursive
-	arg_label = args.label
+	arg_label = args.input_label
 	arg_inpath = args.path
 	arg_extra = args.extra
 
@@ -398,9 +315,9 @@ def main(args):
 	else:
 		speaker_map = {f"{arg_label} 1": f"{arg_label} 1"}  # e.g. 'Speaker 1: Speaker 1'
 
-	# If we've supplied a label argument, update all the labels in speaker_map
+	# If we've supplied a input_label argument, update all the labels in speaker_map
 	if arg_label != DEFAULT_LABEL:
-		arg_label = args.label.strip()
+		arg_label = args.input_label.strip()
 		new_map = dict()
 		for key, value in speaker_map.items():
 			new_map[f"{arg_label} {key.split(' ', 1)[1]}"] = value
@@ -411,6 +328,8 @@ def main(args):
 	# ----------------------------------
 	# Check that the input path argument can be resolved on the file system.
 	try:
+		if arg_inpath.parent == Path("."):  # if it's just a filename, make parent cwd
+			arg_inpath = Path.cwd() / arg_inpath
 		arg_inpath.parent.resolve(strict=True)  # Strict: Input path must exist on the filesystem.
 	except FileNotFoundError as e:
 		print(Fore.RED + f"Input path is invalid: '{arg_inpath}'")
@@ -423,10 +342,16 @@ def main(args):
 	# BUILD LIST OF INPUT FILES
 	# ----------------------------------
 	in_paths = list()
-	if arg_recursive:
-		in_paths = list(arg_inpath.parent.rglob(arg_inpath.name))
+	if arg_inpath.is_dir():
+		if arg_recursive:
+			in_paths = list(arg_inpath.rglob(f"*{arg_ext}"))
+		else:
+			in_paths = list(arg_inpath.glob(f"*{arg_ext}"))
 	else:
-		in_paths = list(arg_inpath.parent.glob(arg_inpath.name))
+		if arg_recursive:
+			in_paths = list(arg_inpath.parent.rglob(arg_inpath.name))
+		else:
+			in_paths = list(arg_inpath.parent.glob(arg_inpath.name))
 
 	# ----------------------------------
 	# HANDLE OUTPUT PATH
@@ -449,7 +374,6 @@ def main(args):
 	if not arg_outpath.suffix:
 		arg_outpath.mkdir(parents=True, exist_ok=True)
 	else:
-		arg_outpath.touch()
 		if len(in_paths) > 1: write_single_file = True
 
 	# Set up some stats collection.
@@ -466,11 +390,19 @@ def main(args):
 		try:
 			if not is_transcript(path): continue  # First, check if we're looking at a valid transcript file.
 
+			# TODO: Too many nests. clean up logic.
 			if arg_outpath.is_dir():
-				if arg_inpath.is_dir():
-					in_out_paths.append((path, arg_outpath / path.relative_to(arg_inpath)))
+				if arg_overwrite:
+					if arg_inpath.is_dir():
+						in_out_paths.append((path, arg_outpath / path.relative_to(arg_inpath)))
+					else:
+						in_out_paths.append((path, arg_outpath / path.relative_to(arg_inpath.parent)))
 				else:
-					in_out_paths.append((path, arg_outpath / path.relative_to(arg_inpath.parent)))
+					if arg_inpath.is_dir():
+						in_out_paths.append((path, get_unique_filename(arg_outpath / path.relative_to(arg_inpath))))
+					else:
+						in_out_paths.append((path, get_unique_filename(arg_outpath /
+																	   path.relative_to(arg_inpath.parent))))
 			else:
 				if arg_overwrite:
 					in_out_paths.append((path, arg_outpath))
@@ -498,7 +430,7 @@ def main(args):
 		if arg_overwrite:
 			print(Fore.RED + f"\tOverwriting '{get_pathstring_with_parent(out_file)}'.")
 		# TODO: Fix this when I implement my file list class. We need to see if we've created a unique file or not.
-		#elif in_file.samefile(out_file):
+		# elif in_file.samefile(out_file):
 		#	print(Fore.RED + f"\tFile already exists, writing instead to: "
 		#					 f"'{get_pathstring_with_parent(out_file)}'.")
 
@@ -525,7 +457,6 @@ def main(args):
 				else:  # arg_outpath doesn't point to a dir, so every intput file appends to the same output. Append.
 					with open(out_file, 'w', encoding='utf-8') as file:
 						file.write(out_string)
-
 
 				# Successfully processed and wrote transcript!
 				success = True  # Exit the while loop
@@ -586,6 +517,7 @@ def main(args):
 	print(f"Total processing time: {(end_time - start_time):.3f} seconds.\n")
 	print(f"Successfully processed {len(success_list)} {"files" if len(success_list) != 1 else "file"}:")
 
+	# TODO: If we're writing to one output file, don't give a big list of files here. Just # of files and the output.
 	for pair in success_list: print(f"\t{get_pathstring_with_parent(pair[0])}" + Fore.CYAN + " ---> " +
 									Fore.RESET + f"{get_pathstring_with_parent(pair[1])}")
 
