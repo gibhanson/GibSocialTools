@@ -1,44 +1,6 @@
 # SocialLookup.py
 # PYTHON_ARGCOMPLETE_OK
 from __future__ import annotations
-
-import sys
-
-# --- Fast-path for PowerShell tab-completion ---
-# This must run before any heavy imports (polars, pydantic, thefuzz, colorama, argcomplete)
-# since process-startup latency directly affects Tab-press responsiveness.
-if "--_complete-names" in sys.argv:
-	import csv
-	import json
-	import os
-	from pathlib import Path
-
-	_here = Path(__file__).resolve().parent
-	_config_path = _here / "sociallookup_config.json"
-	_db_path = _here / "socials.csv"  # default, matches AppSettings default
-
-	if _config_path.exists():
-		try:
-			with open(_config_path, "r") as f:
-				_cfg = json.load(f)
-				if "database_path" in _cfg:
-					_db_path = Path(_cfg["database_path"])
-		except (json.JSONDecodeError, OSError):
-			pass  # fall back to default path
-
-	try:
-		with open(_db_path, "r", newline="", encoding="utf-8") as f:
-			reader = csv.DictReader(f)
-			for row in reader:
-				name = row.get("Name")
-				if name:
-					print(name)
-	except (FileNotFoundError, OSError):
-		pass  # No database yet — just return nothing to complete
-
-	sys.exit(0)
-# --- End fast-path ---
-
 from datetime import datetime
 import json
 import os, sys, argparse, hashlib
@@ -57,7 +19,7 @@ from pydantic_settings import (
 	SettingsConfigDict,
 	JsonConfigSettingsSource
 )
-
+#TODO: Finish implementing argcomplte
 # TODO: implement a backup?
 # TODO: Create an interactive version of "add" when only the -a is supplied.
 
@@ -140,7 +102,7 @@ class Records:
 
 		for platform in self.config.platform_names:
 			handle = getattr(record, platform, None)
-			if handle is not None:
+			if handle != "":
 				url = None
 				display = handle
 

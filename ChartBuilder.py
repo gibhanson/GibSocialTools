@@ -1,13 +1,13 @@
-import argparse
-import re
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import seaborn as sns
 from colorama import Fore, init
 from polars import DataFrame
+import argparse
+import re
+from datetime import date
+from pathlib import Path
 
 data_duration: DataFrame #TODO: Let's not have this be a global.
 
@@ -78,22 +78,36 @@ def main(args):
 	data_full = pl.read_excel(source=excel_path, sheet_name="Data",
 							  engine="openpyxl", infer_schema_length=1000)
 
-	# Filter for time period
-	data_duration = data_full.filter(pl.col("Date") >= pl.col("Date").max() - pl.duration(days=date_range))
+	# Filter for time period: 3 full months back from the start of the current month
+	today = date.today()
+	start_of_this_month = date(today.year, today.month, 1)
+	# Subtract 3 months, handling year rollover
+	month = start_of_this_month.month - 3
+	year = start_of_this_month.year
+	while month <= 0:
+		month += 12
+		year -= 1
+	range_start = date(year, month, 1)
+
+	friendly_data = data_full.filter(
+		(pl.col("Date") >= range_start) & (pl.col("Date") < start_of_this_month)
+	)
 
 	# Create some display-friendly versions of columns
-	data_duration = data_duration.with_columns(pl.Series(name="Long Program", values=data_duration["Participants"] +
-														"\n" + data_duration["Date"].dt.to_string("(%m/%d/%y)")))
-	data_duration = data_duration.with_columns(pl.Series(name="Friendly Date",
-														 values=data_duration["Date"].dt.to_string("%m/%d/%y")))
+	friendly_data = friendly_data.with_columns(pl.Series(name="Long Program", values=friendly_data["Participants"] +
+														"\n" + friendly_data["Date"].dt.to_string("(%m/%d/%y)")))
+	friendly_data = friendly_data.with_columns(pl.Series(name="Friendly Date",
+														 values=friendly_data["Date"].dt.to_string("%m/%d/%y")))
+
+	friendly_data = friendly_data.with_columns(pl.Series(name="Connections", values=friendly_data["Total Viewers"]))
 
 	newnames = []
-	dates = data_duration["Friendly Date"].to_list()
-	for i, n in enumerate(data_duration["Participants"].to_list()):
+	dates = friendly_data["Friendly Date"].to_list()
+	for i, n in enumerate(friendly_data["Participants"].to_list()):
 		if not n: newnames.append("")
 		found = re.search(r'[A-Za-z]+,', n)
 		if found: newnames.append(found.group(0).removesuffix(",") + f" ({dates[i]})")
-	data_duration = data_duration.with_columns(pl.Series(name="Short Program", values=newnames))
+	friendly_data = friendly_data.with_columns(pl.Series(name="Short Program", values=newnames))
 
 	# Set up SNS themes/colors
 	sns.set_style("white")
@@ -101,8 +115,8 @@ def main(args):
 	# Get live attendance chart
 	sns.set_palette("pastel")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, columnA="Registrations", columnB="Total Viewers",
-			  title=f"Live Audience ({get_daterange(data_duration)})",
+	get_plots(friendly_data, columnA="Registrations", columnB="Connections",
+			  title=f"Live Audience ({get_daterange(friendly_data)})",
 			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
@@ -110,8 +124,8 @@ def main(args):
 	# Get podcast chart
 	sns.set_palette("icefire")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, "Podcast Viewers",
-			  title=f"Podcast Viewers ({get_daterange(data_duration)})",
+	get_plots(friendly_data, "Podcast Attendance",
+			  title=f"Podcast Viewers ({get_daterange(friendly_data)})",
 			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
@@ -119,8 +133,8 @@ def main(args):
 	# Get YouTube episode viewership chart
 	sns.set_palette("tab20b_r")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, "YouTube Episode Viewers",
-			  f"Episode Viewership (YouTube) ({get_daterange(data_duration)})",
+	get_plots(friendly_data, "YouTube Episode Viewers",
+			  f"Episode Viewership (YouTube) ({get_daterange(friendly_data)})",
 			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()
@@ -128,8 +142,8 @@ def main(args):
 	# Get Gib videos chart
 	sns.set_palette("pastel")
 	# fig, ax = plt.subplots(figsize=(22, 8))
-	get_plots(data_duration, "Total Gib Viewers",
-			  f"Gib Video Viewership (YouTube) ({get_daterange(data_duration)})",
+	get_plots(friendly_data, "Total Gib Viewers",
+			  f"Gib Video Viewership (YouTube) ({get_daterange(friendly_data)})",
 			  trend=False)
 	plt.tight_layout(pad=5.0)
 	plt.show()

@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 import argparse, os, re, time
-from enum import IntEnum, StrEnum, Flag, auto
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from colorama import Fore, init
 import pyperclip
 import sys
-import logging
 from timecode import Timecode
-from typing import TypedDict, Iterator  # TODO: Use more of this
-from typing import NamedTuple
 
 '''
 This program strips the speaker labels and timecodes from a text file produced by Adobe Premiere Pro's
 "Export to Text File" for transcribed video sequences. It can optionally replace speaker labels with proper names.
 '''
+
+# TODO: Error: when processing an entire directory (for merge/append), and
+#  no output file was specified, use the dir name.
 
 # TODO: Convert the timecodes regex system over to the timecode library.
 # Regex matching timecodes, e.g. 00:01:22:08 - 00:01:38:09
@@ -25,13 +25,6 @@ DEFAULT_LABEL = "Speaker"  # Default speaker input_label to match in transcripts
 SEPARATOR = "-"  # Used when appending several transcripts to a single output file, to delineate transcript names.
 DEFAULT_UNIQUENAME = "stripped"
 
-
-# Error logging for production.
-logging.basicConfig(
-	filename=Path(__file__).resolve().parent / "TextStripper_err.log",
-	level=logging.ERROR,
-	format="%(asctime)s - %(levelname)s - %(message)s"
-)
 
 
 # Error codes for ParseFileException
@@ -70,8 +63,6 @@ def global_exception_handler(exctype, value, traceback):
 		# Fall back to Python's default behavior so developers see the crash
 		sys.__excepthook__(exctype, value, traceback)
 		return
-	# Log the full traceback securely for developers to review later
-	logging.error("Uncaught exception occurred", exc_info=(exctype, value, traceback))
 	# Present a clean, non-technical message to the end user
 	print("\n[!] Something went wrong on our end.")
 	print("The error has been logged, and our team will look into it. Please try again later.\n")
@@ -114,8 +105,8 @@ def zero_timecode(current: str, starting: str) -> str:
 		return time_result
 
 
-def get_unique_filename(original_path: Path) -> Path:
-	"""Takes a path. If a file with the same name already exists there, return a path with DEFAULT_UNIQUENAME, and
+def get_unique_filename(original_path: Path, suffix: str = DEFAULT_UNIQUENAME) -> Path:
+	"""Takes a path. If a file with the same name already exists there, return a path with suffix, and
 	possibly a number, appended to the filename such that a path to a unique, nonexistant filename is returned.
 	:returns: Path to the unique file."""
 
@@ -125,8 +116,8 @@ def get_unique_filename(original_path: Path) -> Path:
 	# Strip trailing _NNN from original_path.
 	split_filename = re.split(r"_(\d+)$", original_path.stem, maxsplit=1)
 
-	# append DEFAULT_UNIQUENAME to base_stem, and try to exit before looping.
-	new_path = original_path.parent / f"{split_filename[0]}_{DEFAULT_UNIQUENAME}{original_path.suffix}"
+	# append suffix to base_stem, and try to exit before looping.
+	new_path = original_path.parent / f"{split_filename[0]}_{suffix}{original_path.suffix}"
 	if not new_path.exists(): return new_path
 
 	counter = 1
@@ -135,7 +126,7 @@ def get_unique_filename(original_path: Path) -> Path:
 
 	# Test if file with the name exists, and increment the trailing number till a unique file is found.
 	while new_path.exists():
-		new_path = original_path.parent / f"{split_filename[0]}_{DEFAULT_UNIQUENAME}_{counter}{original_path.suffix}"
+		new_path = original_path.parent / f"{split_filename[0]}_{suffix}_{counter}{original_path.suffix}"
 		counter += 1
 
 	return new_path
@@ -261,11 +252,13 @@ def get_args():
 												 'video sequences. Can optionally replace speaker labels '
 												 f'(e.g. \'{DEFAULT_LABEL} 1\') with proper names, and consolidate '
 												 f'multiple transcripts into one output file.')
-	parser.add_argument("-p", "--path", type=Path, default=Path.cwd(),
+	parser.add_argument("path", type=Path, nargs='?', default=Path.cwd(),
 						help="path to transcript file or directory containing transcript files. Supports"
 							 "wildcard '*' matching.")
 	parser.add_argument("-e", "--extension", type=str, default=DEFAULT_EXT,
 						help=f"filename extension for directory processing, default is '{DEFAULT_EXT}'")
+	parser.add_argument("-p", "--append", type=str, default=DEFAULT_UNIQUENAME,
+						help=f"append suffix to output filenames. Defualt is '{DEFAULT_UNIQUENAME}'")
 	parser.add_argument("-o", "--output", type=Path,
 						help="output filename or directory. Can be relative to input directory.")
 	parser.add_argument("-r", "--recursive", default=False, action="store_true",
@@ -300,6 +293,7 @@ def main(args):
 	arg_label = args.input_label
 	arg_inpath = args.path
 	arg_extra = args.extra
+	arg_suffix = args.append
 
 	# ----------------------------------
 	# HANDLE SPEAKERS
@@ -315,7 +309,7 @@ def main(args):
 	else:
 		speaker_map = {f"{arg_label} 1": f"{arg_label} 1"}  # e.g. 'Speaker 1: Speaker 1'
 
-	# If we've supplied a input_label argument, update all the labels in speaker_map
+	# If we've supplied an input_label argument, update all the labels in speaker_map
 	if arg_label != DEFAULT_LABEL:
 		arg_label = args.input_label.strip()
 		new_map = dict()
@@ -399,15 +393,17 @@ def main(args):
 						in_out_paths.append((path, arg_outpath / path.relative_to(arg_inpath.parent)))
 				else:
 					if arg_inpath.is_dir():
-						in_out_paths.append((path, get_unique_filename(arg_outpath / path.relative_to(arg_inpath))))
+						in_out_paths.append((path, get_unique_filename(arg_outpath / path.relative_to(arg_inpath),
+																	   arg_suffix)))
 					else:
 						in_out_paths.append((path, get_unique_filename(arg_outpath /
-																	   path.relative_to(arg_inpath.parent))))
+																	   path.relative_to(arg_inpath.parent),
+																	   arg_suffix)))
 			else:
 				if arg_overwrite:
 					in_out_paths.append((path, arg_outpath))
 				else:
-					in_out_paths.append((path, get_unique_filename(arg_outpath)))
+					in_out_paths.append((path, get_unique_filename(arg_outpath), arg_suffix))
 		except ParseFileException as e:  # This exception wraps together several  i/o exceptions.
 			print(Fore.RED + f"Error reading {get_pathstring_with_parent(path)}.")
 			fail_list.append(path)
