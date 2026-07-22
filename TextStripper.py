@@ -1,6 +1,5 @@
 # TestStripper.py
 from __future__ import annotations
-
 import argparse, os, re, time
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -41,7 +40,7 @@ class TimecodeHandlerType(StrEnum):
 	TC_PRESERVE = "P"
 
 
-# TODO: Build some sort of speaker records class that removes need for this global variable.
+# TODO: Build some sort of speaker socials_db class that removes need for this global variable.
 speaker_arg_counter = 0  # Incremented with each new speaker in arguments.
 
 
